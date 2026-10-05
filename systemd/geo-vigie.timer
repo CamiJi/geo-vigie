@@ -1,0 +1,11 @@
+[Unit]
+Description=Exécuter geo-vigie toutes les 72 heures
+
+[Timer]
+OnActiveSec=72h
+OnUnitActiveSec=72h
+AccuracySec=1min
+Unit=geo-vigie.service
+
+[Install]
+WantedBy=timers.target

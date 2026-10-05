@@ -1,0 +1,222 @@
+# geo-vigie — configuration
+# ─────────────────────────────────────────────────────────────────────
+# Sources contrôlées depuis un poste public le 2026-10-05.
+# Certaines répondent HTTP 200 mais ne livrent aucune donnée d'offre ; seules
+# les sources actives ci-dessous ont une structure d'offres vérifiée.
+# ─────────────────────────────────────────────────────────────────────
+
+general:
+  lang: fr
+  timezone: Europe/Paris
+  max_description_chars: 1500   # troncature avant envoi au LLM (coût)
+  request_delay_seconds: 1     # délai entre les sources, usage léger
+
+# CV utilisé pour le scoring.
+cv_file: cv/candidate.txt
+
+# Mots-clés : une offre est gardée si elle contient AU MOINS un terme pertinent
+# et AUCUN terme `exclude`. Matching à frontière de mot, insensible aux
+# accents/casse (voir common.py → keyword_match).
+#
+#   include_strong : distinctifs (géolog, métallogénie…) → cherchés partout
+#                    (titre + description + lieu)
+#   include_weak   : génériques (terrain, ressources…) → TITRE SEULEMENT
+#                    → sinon « développement de carrières » ou le mot allemand
+#                      « Terminierung » (qui contient "minier") font passer
+#                      n'importe quelle offre
+keywords:
+  include_strong:
+    # Géosciences — le cœur du sujet
+    - géolog
+    - hydrogéolog
+    - hydrogeolog
+    - géotechni
+    - geotechni
+    - pédolog
+    - pedolog
+    - géophysique
+    - geophysic
+    - géochimie
+    - geochem
+    - métallogén
+    - metallogeny
+    - pétrolier
+    - petrolier
+    - pétrole
+    - petroleum
+    - hydrocarbure
+    - sismique
+    - carottage
+    - core logging
+    - ore deposit
+    - mineral exploration
+    - exploration geologist
+    # Mines / extraction / exploration (profil candidat)
+    - gisement
+    - gisements
+    - gisement
+    - mineralisation
+    - réservoir
+    - reservoir
+    - extractif
+    # Familles élargies
+    - geoscience
+    - earth science
+    - bassin versant
+    - hydrologie
+    - geothermal
+    - géothermie
+
+  include_weak:
+    # Termes de secteur génériques — TITRE UNIQUEMENT
+    - mining
+    - minier
+    - minière
+    - mine
+    - exploration
+    - forage
+    - drill
+    - deposit
+    - dépôt
+
+  exclude:
+    # Ne jamais les chercher dans la description pour `include_*` :
+    # on écarte l'offre entière si le terme apparaît n'importe où.
+    - stage
+    - stagiaire
+    - internship
+    - intern
+    - alternance
+    - apprentiss
+    - pédago        # évite "pédagogue"
+    - doctorat      # le profil fourni est de niveau Master, sans PhD
+    - phd
+    - post-doctorat
+    - postdoc
+    - postdoctoral
+    - alternant
+
+# ── Sources ──────────────────────────────────────────────────────────
+# type: json | rss
+# json : items_path = chemin vers la liste, fields = mapping
+sources:
+  - name: arbeitnow
+    type: json
+    enabled: true
+    url: https://www.arbeitnow.com/api/job-board-api
+    items_path: data
+    fields:
+      title: title
+      company: company_name
+      location: location
+      url: url
+      description: description
+      posted_at: created_at
+    # API paginée : la 1re page suffit pour un relevé quotidien.
+    # Retirer `enabled: true` si le périmètre Europe vous semble trop large.
+
+  - name: jobicy
+    type: json
+    enabled: true
+    url: "https://jobicy.com/api/v2/remote-jobs?count=50&tag=engineering"
+    items_path: jobs
+    fields:
+      title: jobTitle
+      company: companyName
+      location: jobGeo
+      url: url
+      description: jobDescription
+      posted_at: pubDate
+
+  - name: remotive
+    type: json
+    enabled: true
+    url: "https://remotive.com/api/remote-jobs?limit=50"
+    items_path: jobs
+    fields:
+      title: title
+      company: company_name
+      location: candidate_required_location
+      url: url
+      description: description
+      posted_at: publication_date
+
+  # International / anglais : Reed rend des annonces géologiques réelles,
+  # y compris des postes graduate/junior. robots.txt autorise /jobs/.
+  - name: reed-uk-geologist
+    type: next_json
+    enabled: true
+    url: https://www.reed.co.uk/jobs/geologist-jobs
+    url_prefix: https://www.reed.co.uk
+    items_path: props.pageProps.searchResults.jobs
+    fields:
+      title: jobDetail.jobTitle
+      company: jobDetail.ouName
+      location: jobDetail.displayLocationName
+      url: url
+      description: jobDetail.jobDescriptionSnippet
+      posted_at: jobDetail.dateCreated
+
+  # EGU publie des annonces en anglais. Plusieurs requêtes de mots-clés
+  # limitent la liste aux géosciences ; les doublons entre requêtes sont
+  # supprimés par fingerprint. robots.txt n'interdit pas /jobs/.
+  - name: egu-geology
+    type: egu
+    enabled: true
+    url: "https://www.egu.eu/jobs/search/?keywords=geology&limit=50"
+
+  - name: egu-geoscience
+    type: egu
+    enabled: true
+    url: "https://www.egu.eu/jobs/search/?keywords=geoscience&limit=50"
+
+  - name: egu-mineral-exploration
+    type: egu
+    enabled: true
+    url: "https://www.egu.eu/jobs/search/?keywords=mineral%20exploration&limit=50"
+
+  # France : pages de résultats publiques, chemins sans query string.
+  # Les règles robots.txt consultées autorisent ces URLs; cadence globale 1/s.
+  - name: hellowork-geologue
+    type: hellowork
+    enabled: true
+    url: https://www.hellowork.com/fr-fr/emploi/metier_geologue.html
+
+  - name: hellowork-geologie
+    type: hellowork
+    enabled: true
+    url: https://www.hellowork.com/fr-fr/emploi/mot-cle_geologie.html
+
+  - name: france-travail-geologue
+    type: france_travail
+    enabled: true
+    url: https://candidat.francetravail.fr/offres/emploi/geologue/s19m4
+
+  # EURAXESS est en pause : le formulaire de recherche est en POST et le
+  # paramètre keyword de l'URL testée ne filtrait pas les cartes observées.
+  # Ne pas l'activer avant d'avoir résolu et testé le vrai contrat de recherche.
+  # France Travail : API officielle à clé gratuite, intégration après création
+  # du client OAuth sur le portail développeur.
+  # Refusées au test : Google News (presse, pas des offres), APEC/Indeed/Jooble
+  # (403), URLs carrière BRGM/Andra testées (404/HTML vide), Jobicy/Remotive/
+  # Arbeitnow restent des agrégateurs généralistes à faible rendement géologie.
+  # Earthworks Jobs retiré : ses conditions interdisent les outils automatisés
+  # de scraping/navigation (terms §2.7), malgré un JSON-LD techniquement lisible.
+  # LinkedIn exclu : pas d'API publique de recherche et scraping interdit par ToS.
+
+# ── Scoring ──────────────────────────────────────────────────────────
+scoring:
+  model: ""                  # vide = modèle du .env (LLM_MODEL)
+  min_score: 55              # seuil qualité : les adéquations faibles restent masquées
+  top_n: 15                  # nombre max d'offres dans le mail
+  temperature: 0
+
+# ── Rapport ──────────────────────────────────────────────────────────
+report:
+  # Objet du mail — {date} et {count} sont remplacés.
+  subject: "[geo-vigie] {count} offre(s) — {date}"
+  # Sections du rapport, dans l'ordre.
+  sections:
+    - top          # offres notées >= min_score
+    - discarded    # compact : celles filtrées par mots-clés
+  send_empty: false          # true = mail quand même si 0 offre

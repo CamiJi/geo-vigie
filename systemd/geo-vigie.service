@@ -1,0 +1,11 @@
+[Unit]
+Description=Collecte et rapport geo-vigie
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/apps/geo-vigie
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/apps/geo-vigie/run.sh
+TimeoutStartSec=30min
