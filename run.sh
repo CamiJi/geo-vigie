@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # geo-vigie — pipeline complet : collecte → notation → rapport.
-# Usage : ./run.sh [--preview] [--limit N] [--profile ID]
+# Usage : ./run.sh [--preview] [--limit N] [--profile ID | --all]
+#   sans --profile ni --all : tous les profils actifs (--all explicite,
+#   c'est aussi le défaut — le timer systemd appelle run.sh sans argument).
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -14,6 +16,7 @@ while [[ $# -gt 0 ]]; do
     --preview)  PREVIEW="--preview"; shift ;;
     --limit)    LIMIT="--limit $2"; shift 2 ;;
     --profile)  PROFILE="--profile $2"; shift 2 ;;
+    --all)      PROFILE=""; shift ;;
     *) echo "option inconnue : $1" >&2; exit 2 ;;
   esac
 done

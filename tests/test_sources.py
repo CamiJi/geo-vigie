@@ -7,6 +7,7 @@ from common import keyword_match, load_config
 from collect import (
     _french_date,
     _relative_date,
+    collect as run_collect,
     fetch_egu,
     fetch_france_travail,
     fetch_hellowork,
@@ -159,6 +160,28 @@ class SourceParserTests(unittest.TestCase):
         self.assertNotIn("Contact", cv)
         self.assertNotIn("@", cv)
         self.assertNotRegex(cv, r"\b\d{5}\b")
+
+
+class CheckSourceTests(unittest.TestCase):
+    """--check : une source qui rend 0 élément doit alerter (exit 1)."""
+
+    CONFIG = {"general": {"request_delay_seconds": 0},
+              "sources": [{"name": "src", "type": "rss",
+                           "url": "http://x/feed"}]}
+
+    def _run_check(self, items):
+        from io import StringIO
+        from contextlib import redirect_stdout
+        with patch("collect.FETCHERS",
+                   {"rss": lambda source, config: list(items)}), \
+                redirect_stdout(StringIO()):
+            return run_collect(self.CONFIG, check=True)
+
+    def test_zero_items_is_flagged_and_exits_1(self):
+        self.assertEqual(self._run_check([]), 1)
+
+    def test_non_empty_source_stays_ok(self):
+        self.assertEqual(self._run_check([{"title": "Offre"}]), 0)
 
 
 class NewFetcherTests(unittest.TestCase):

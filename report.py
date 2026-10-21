@@ -348,7 +348,7 @@ def report(config: dict, *, preview: bool = False, force: bool = False,
 
     if preview:
         print(text)
-        end_run(conn, run_id, "preview")
+        end_run(conn, run_id, f"profile={meta['profile']} preview")
         conn.close()
         return 0
 
@@ -356,7 +356,7 @@ def report(config: dict, *, preview: bool = False, force: bool = False,
             and not config.get("report", {}).get("send_empty")):
         print("0 offre au-dessus du seuil — mail non envoyé "
               "(utiliser --force pour forcer).")
-        end_run(conn, run_id, "vide, non envoyé")
+        end_run(conn, run_id, f"profile={meta['profile']} vide, non envoyé")
         conn.close()
         return 0
 
@@ -381,7 +381,8 @@ def report(config: dict, *, preview: bool = False, force: bool = False,
         )
         conn.commit()
 
-    end_run(conn, run_id, f"envoyé, {len(rows)} offre(s)")
+    end_run(conn, run_id, f"profile={meta['profile']} envoyé, "
+                          f"{len(rows)} offre(s)")
     conn.close()
     print(f"Mail envoyé — {len(rows)} offre(s)")
     return 0

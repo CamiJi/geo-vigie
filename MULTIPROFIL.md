@@ -98,9 +98,9 @@ repli sur `MAIL_TO` / `MAIL_CC` du `.env` quand `mailer` est absent.
 | 4 | Sources hôtellerie / management | ✅ fait (commit `7da1488`) : balayage 2026-10-21 + fetchers `lhotellerie` / `michaelpage`, RSS JdP avec `max_items: 50`, requêtes FT/HelloWork — 16/16 sources OK |
 | 5 | `score.py` multi-profils | ✅ fait : persona, geo et **plancher salarial** injectés depuis le profile.yaml (`build_prompt`) ; prompt quentin byte-identique ; 41/41 tests |
 | 6 | `report.py` multi-mailers + baromètre | ✅ fait : destinataires `mailer.to/cc` par profil (fallback `.env`), section **baromètre** volumes/évolution + scores dans le mail (text et HTML) |
-|  7 | Orchestration | `run.sh --all`, systemd timer inchangé, runs tagués par profil — **partiel** : `run.sh` sans `--profile` note et rédige déjà chaque profil actif (sécurité timer, fait à l'étape 5) |
+|  7 | Orchestration | ✅ fait : `run.sh [--profile ID \| --all]` (défaut = tous les profils actifs, le timer sans argument reste sûr) ; runs tagués par profil (`profile=gabriela ok=2 ko=0`, collect : `matchs gabriela=61, quentin=58`) |
 | 8 | CV Gabriela | ✅ fait : `profiles/gabriela/cv.txt` synthétisé depuis le LinkedIn brut (sans les posts), anonymisé (marqueur `Languages`) |
-| 9 | Recette | `--check`, `--dry` (calibrage keywords), `score --limit 1`, `report --preview`, premier run timer |
+| 9 | Recette | ✅ fait le 2026-10-21 : `--check` (16 sources), `--dry` (gabriela=82 / quentin=79), `score --limit 1` par profil, `report --preview` par profil, `./run.sh --preview --limit 2` de bout en bout — **reste** : premier run du timer sur la machine cible (pas de systemd dans cet environnement) |
 
 ### Bug connu préexistant (découvert à l'étape 5, à trancher)
 
@@ -152,6 +152,16 @@ fetchers existants) : France Travail + HelloWork avec mots-clés hôtellerie
 - API Adzuna : injoignable depuis ce réseau + clé gratuite requise → piste reportée.
 
 ## Risques
+
+- **France Travail en mode shell (observé le 21/10 après-midi)** : pendant la
+  recette, les 2 sources FT basculent d'un HTML server-renderé (20-92 cards
+  le matin) vers un shell SPA « secours » de 7 Ko pour toute requête sous
+  `/offres/` — 0 card, quel que soit l'UA (honnête ou navigateur) ou les
+  entêtes, stable après 45 s d'attente. Déploiement FT ou dégradation
+  réseau, indécidable depuis un seul réseau. Le collecte tolère (0 item =
+  0 offre), `--check` alerte désormais (`VIDE … ⚠`, exit 1). À retester au
+  prochain run ; si persistant → traiter comme WTTJ : relever l'URL XHR
+  dans l'onglet Réseau.
 
 - **Volume/bruit** : les sources généralistes remontent énormément d'offres
   hôtelières (souvent sous le plancher salarial) → calibrage `--dry` strict et

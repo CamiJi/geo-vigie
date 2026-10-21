@@ -460,7 +460,14 @@ def collect(config: dict, *, dry: bool = False, check: bool = False,
         stats["sources"] += 1
 
         if check:
-            print(f"  OK   {name:<24} {len(items):>4} éléments")
+            # 0 élément = quasi toujours un incident (rendu passé en JS,
+            # page vide, blocage) : on l'alerte et on sort en erreur.
+            if not items:
+                problems.append(f"{name}: 0 élément "
+                                "(page vide, rendu JS ou blocage ?)")
+                print(f"  VIDE {name:<24}    0 élément  ⚠")
+            else:
+                print(f"  OK   {name:<24} {len(items):>4} éléments")
             continue
 
         limit = int(config.get("general", {}).get("max_description_chars", 1500))
@@ -561,7 +568,11 @@ def collect(config: dict, *, dry: bool = False, check: bool = False,
         return 1 if problems else 0
 
     if conn:
-        end_run(conn, run_id, " ".join(f"{k}={v}" for k, v in stats.items()))
+        detail = " ".join(f"{k}={v}" for k, v in stats.items())
+        if profile_hits:
+            detail += " | matchs " + ", ".join(
+                f"{pid}={n}" for pid, n in sorted(profile_hits.items()))
+        end_run(conn, run_id, detail)
 
     print(f"Sources interrogées : {stats['sources']}")
     print(f"Nouvelles offres retenues : {stats['kept']}")

@@ -251,7 +251,7 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
     ]
     if not active_sources:
         print("Aucune source active à noter.")
-        end_run(conn, run_id, "aucune source active")
+        end_run(conn, run_id, f"profile={profile} aucune source active")
         conn.close()
         return 0
 
@@ -276,7 +276,7 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
 
     if not rows:
         print("Aucune offre à noter.")
-        end_run(conn, run_id, "0 notée")
+        end_run(conn, run_id, f"profile={profile} 0 notée")
         conn.close()
         return 0
 
@@ -313,7 +313,7 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
         if data["reason"]:
             print(f"      ↳ {data['reason']}")
 
-    end_run(conn, run_id, f"ok={ok} ko={failed}")
+    end_run(conn, run_id, f"profile={profile} ok={ok} ko={failed}")
     conn.close()
     print(f"\nNotées : {ok} — échecs : {failed}")
     return 0 if failed == 0 else 1
