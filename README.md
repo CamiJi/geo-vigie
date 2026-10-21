@@ -17,6 +17,31 @@ quotidien par email.
 | CV | **CV candidat fourni en PDF** | Extrait localement vers `cv/candidate.txt`, ignoré par Git |
 | Score | Libellé **« adéquence /100 »** | Une vraie « probabilité d'obtenir le poste » est impossible : on ne connaît ni la concurrence ni le process |
 
+## Bench coût par tâche (2026-10-21)
+
+Méthode : `bench_cost.py` — la **vraie tâche** de scoring (PROMPT de `score.py`),
+10 offres réelles × modèle, coût exact par appel (OpenRouter `usage.include`),
+même profil, `temperature 0`. Le prix par token ne prédit **pas** le coût par
+tâche : ce qui compte, c'est le volume de sortie facturé.
+
+| Modèle | $/tâche | vs MiMo | Latence moy. | Tok. sorties | Fiabilité |
+|---|---:|---:|---:|---:|---|
+| `google/gemini-3.7-flash` | 0,00292 | 11× plus cher | 5,9 s | 547 | 10/10 |
+| **`xiaomi/mimo-v2.6-flash`** | **0,00026** | référence | 5,4 s | 597 | 10/10 |
+| `qwen/qwen3.7-flash` | 0,00044 | **1,7× plus cher** | 41,6 s | 2 784 | 9/10 (HTTP 429) |
+
+Conclusions :
+- **MiMo gardé** : meilleur coût par tâche ET plus fiable ; aucun benchmark
+  public ne le bat sur cette tâche (résultat propre, daté, reproductible).
+- **Qwen3.7-flash est plus cher à la tâche malgré des tarifs 2-5× inferieurs**
+  : ~2 500 tokens de raisonnement caché facturés en sortie à chaque appel,
+  8× plus lent, un 429 sur 10, et scores erratiques (2 décisions inversées au
+  seuil `min_score` : offre 94 notée 65 vs 35/35 ; offre 45 notée 15 vs 55/62).
+  Absent aussi du leaderboard τ²-Bench Airline (couverture insuffisante).
+- **Gemini** reste réservé aux tâches où la synthèse prime — 11× plus cher ici.
+- Pour revérifier un candidat modèle : `.venv/bin/python bench_cost.py --models <id>`
+  (écrit le détail dans `db/bench-cost-*.txt`, jamais en base).
+
 ## Pipeline
 
 ```
