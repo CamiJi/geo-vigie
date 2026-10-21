@@ -206,7 +206,7 @@ sources:
 
 # ── Scoring ──────────────────────────────────────────────────────────
 scoring:
-  model: ""                  # vide = modèle du .env (LLM_MODEL)
+  model: "xiaomi/mimo-v2.6-flash"  # override du .env (LLM_MODEL) — testé le 21/10/2026
   min_score: 55              # seuil qualité : les adéquations faibles restent masquées
   top_n: 15                  # nombre max d'offres dans le mail
   temperature: 0
