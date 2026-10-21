@@ -13,12 +13,82 @@ import argparse
 import smtplib
 import ssl
 import sys
-from datetime import date
+from datetime import date, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import escape
 
 from common import db, end_run, load_config, load_env, log_run, now, profile_of
+
+
+def recipients(config: dict, env: dict) -> tuple[list[str], list[str]]:
+    """Destinataires du mail : `mailer.to` / `mailer.cc` du profil d'abord,
+    sinon les variables globales MAIL_TO / MAIL_CC du .env."""
+    mailer = config.get("mailer") or {}
+    raw_to = mailer.get("to") or env.get("MAIL_TO", "")
+    raw_cc = mailer.get("cc") or env.get("MAIL_CC", "")
+    to = [value.strip() for value in str(raw_to).split(",") if value.strip()]
+    cc = [value.strip() for value in str(raw_cc).split(",") if value.strip()]
+    return to, cc
+
+
+def barometer(conn, config: dict) -> dict:
+    """Volumes d'offres et santé des scores — posture « sondage du marché ».
+
+    - offres matchant le profil par jour (`first_seen`, entrée en base) sur
+      les 14 derniers jours, agrégées en 7 j vs 7 j précédents ;
+    - scores des 7 derniers jours (moyenne, nb au-dessus du seuil) et cumul.
+
+    Comparaisons lexicographiques sur les dates ISO — sûres pour `YYYY-MM-DD`.
+    """
+    profile = profile_of(config)
+    min_score = int(config.get("scoring", {}).get("min_score", 45))
+    today = date.today().isoformat()
+    d7 = (date.today() - timedelta(days=7)).isoformat()
+    d14 = (date.today() - timedelta(days=14)).isoformat()
+
+    per_day = conn.execute(
+        "SELECT date(o.first_seen) AS d, COUNT(*) AS c "
+        "FROM offers o "
+        "JOIN matches m ON m.offer_id = o.id AND m.profile_id = ? "
+        "WHERE o.first_seen >= ? "
+        "GROUP BY d ORDER BY d",
+        (profile, d14),
+    ).fetchall()
+    last7 = sum(r["c"] for r in per_day if d7 <= r["d"] <= today)
+    prev7 = sum(r["c"] for r in per_day if r["d"] < d7)
+    recent_days = [(r["d"], r["c"]) for r in per_day if d7 <= r["d"] <= today]
+
+    if prev7 == 0:
+        pct = None
+        trend = ("démarrage" if last7 else "aucun relevé")
+    else:
+        pct = round((last7 - prev7) / prev7 * 100)
+        trend = ("en hausse" if pct > 10
+                 else "en baisse" if pct < -10 else "stable")
+
+    def _stats(where: str, params: tuple) -> dict:
+        row = conn.execute(
+            "SELECT COUNT(*) n, AVG(score) avg, "
+            "SUM(CASE WHEN score >= ? THEN 1 ELSE 0 END) ok "
+            f"FROM scores {where}",
+            (min_score, *params),
+        ).fetchone()
+        return {"n": row["n"], "avg": row["avg"], "ok": row["ok"] or 0}
+
+    week = _stats("WHERE profile_id = ? AND scored_at >= ?",
+                  (profile, d7))
+    total = _stats("WHERE profile_id = ?", (profile,))
+    tracked = conn.execute(
+        "SELECT COUNT(*) c FROM matches WHERE profile_id = ?",
+        (profile,),
+    ).fetchone()["c"]
+
+    return {
+        "last7": last7, "prev7": prev7, "pct": pct, "trend": trend,
+        "days": recent_days, "min_score": min_score,
+        "week": week, "total": total, "tracked": tracked,
+    }
 
 
 def gather(config: dict, conn, *, latest: int | None = None) -> dict:
@@ -59,7 +129,8 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
         ).fetchone()["c"]
         return {"top": top, "min_score": min_score,
                 "new_unscored": new_unscored, "today": today,
-                "mode": "latest", "latest": latest, "profile": profile}
+                "mode": "latest", "latest": latest, "profile": profile,
+                "baro": barometer(conn, config)}
 
     top = conn.execute(
         "SELECT o.*, s.score, s.score_reason "
@@ -80,7 +151,65 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
     ).fetchone()["c"]
 
     return {"top": top, "min_score": min_score, "new_unscored": new_unscored,
-            "today": today, "mode": "daily", "profile": profile}
+            "today": today, "mode": "daily", "profile": profile,
+            "baro": barometer(conn, config)}
+
+
+def _baro_facts(meta: dict) -> dict | None:
+    """Valeurs formatées du baromètre (None si absent du meta)."""
+    b = meta.get("baro")
+    if not b:
+        return None
+    if b["pct"] is None:
+        evo = f"semaine précédente : {b['prev7']} → {b['trend']}"
+    else:
+        evo = (f"semaine précédente : {b['prev7']} → {b['trend']} "
+               f"({b['pct']:+d} %)")
+    days = " · ".join(f"{d[5:]}: {c}" for d, c in b["days"]) or "aucun jour"
+    week_avg = ("—" if b["week"]["avg"] is None
+                else f"{b['week']['avg']:.0f}")
+    total_avg = ("—" if b["total"]["avg"] is None
+                 else f"{b['total']['avg']:.0f}")
+    return {"b": b, "evo": evo, "days": days,
+            "week_avg": week_avg, "total_avg": total_avg}
+
+
+def _baro_text(meta: dict) -> list[str]:
+    """Bloc baromètre en texte (vide si pas de meta baro)."""
+    f = _baro_facts(meta)
+    if not f:
+        return []
+    b = f["b"]
+    return [
+        "📊 Baromètre — sondage du marché (7 jours)",
+        f"  Offres pertinentes relevées : {b['last7']} ({f['evo']})",
+        f"  Par jour (MM-JJ) : {f['days']}",
+        f"  Notation 7 j : {b['week']['n']} notée(s), moyenne "
+        f"{f['week_avg']}/100, {b['week']['ok']} ≥ seuil {b['min_score']}",
+        f"  Cumul : {b['tracked']} offre(s) suivie(s), moyenne "
+        f"{f['total_avg']}/100, {b['total']['ok']} au-dessus du seuil",
+        "",
+    ]
+
+
+def _baro_html(meta: dict) -> str:
+    """Bloc baromètre en HTML (chaîne vide si absent)."""
+    f = _baro_facts(meta)
+    if not f:
+        return ""
+    b = f["b"]
+    return f"""
+      <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;
+                  padding:10px 14px;margin:12px 0;font-size:14px;color:#374151">
+        <strong>📊 Baromètre — sondage du marché (7 jours)</strong><br>
+        Offres pertinentes relevées : <strong>{b['last7']}</strong>
+        ({escape(f['evo'])})<br>
+        Par jour (MM-JJ) : {escape(f['days'])}<br>
+        Notation 7 j : {b['week']['n']} notée(s) · moyenne
+        {f['week_avg']}/100 · {b['week']['ok']} ≥ seuil {b['min_score']}<br>
+        Cumul : {b['tracked']} offre(s) suivie(s) · moyenne
+        {f['total_avg']}/100 · {b['total']['ok']} au-dessus du seuil
+      </div>"""
 
 
 def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
@@ -99,6 +228,10 @@ def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
                     f"Offres en attente de notation : {meta['new_unscored']}.")
         if fmt == "html":
             body = f"<p>{escape(body).replace(chr(10), '<br>')}</p>"
+            return subject, body + _baro_html(meta)
+        baro = _baro_text(meta)
+        if baro:
+            body = f"{body}\n\n" + "\n".join(baro)
         return subject, body
 
     if fmt == "text":
@@ -110,6 +243,7 @@ def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
                 "Score = adéquation au CV, pas probabilité d'embauche."
             )
             lines.append("")
+        lines += _baro_text(meta)
         for r in rows:
             lines += [
                 f"[{r['score']}/100] {r['title']}",
@@ -160,6 +294,7 @@ def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
       -apple-system,Segoe UI,Roboto,sans-serif;color:#111827">
       <h2 style="margin-bottom:4px">🔎 {escape(subject)}</h2>
       <p style="color:#6b7280;margin-top:0">{escape(intro)}</p>
+      {_baro_html(meta)}
       <table style="border-collapse:collapse;width:100%">{''.join(tr)}</table>
       <p style="color:#9ca3af;font-size:12px">geo-vigie — relevé automatique.
       Vérifiez toujours l'offre d'origine avant de postuler.</p>
@@ -167,14 +302,15 @@ def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
     return subject, html
 
 
-def send(env: dict, subject: str, text: str, html: str) -> None:
+def send(env: dict, subject: str, text: str, html: str,
+         config: dict | None = None) -> None:
+    to_addresses, cc_addresses = recipients(config or {}, env)
+    if not to_addresses:
+        raise SystemExit("Aucun destinataire : `mailer.to` (profile.yaml) "
+                         "ou MAIL_TO (.env) manquant.")
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = env["MAIL_FROM"]
-    to_addresses = [value.strip() for value in env["MAIL_TO"].split(",")
-                    if value.strip()]
-    cc_addresses = [value.strip() for value in env.get("MAIL_CC", "").split(",")
-                    if value.strip()]
     msg["To"] = ", ".join(to_addresses)
     if cc_addresses:
         msg["Cc"] = ", ".join(cc_addresses)
@@ -224,12 +360,14 @@ def report(config: dict, *, preview: bool = False, force: bool = False,
         conn.close()
         return 0
 
-    required = ("SMTP_HOST", "SMTP_USER", "SMTP_PASS", "MAIL_FROM", "MAIL_TO")
+    required = ("SMTP_HOST", "SMTP_USER", "SMTP_PASS", "MAIL_FROM")
     missing = [k for k in required if not env.get(k)]
+    if not recipients(config, env)[0]:
+        missing.append("MAIL_TO (ou `mailer.to` du profil)")
     if missing:
         raise SystemExit(f"Configuration SMTP incomplète : {', '.join(missing)}")
 
-    send(env, subject, text, html)
+    send(env, subject, text, html, config)
 
     ids = [r["id"] for r in rows]
     if ids:

@@ -77,11 +77,16 @@ scoring:
   min_salary_net_month: 2200        # plancher
   min_score: 55
   top_n: 15
+report:
+  subject: "[vigie-gabriela] {count} offre(s) — {date}"
 mailer:
   to: adresse-gabriela@...
   cc: camille@...
-  subject: "[vigie-gabriela] {count} offre(s) — {date}"
 ```
+
+Sujet porté par `report.subject` (clé historique de l'étape 1, source
+unique) ; `mailer.to` / `mailer.cc` portent les destinataires, avec
+repli sur `MAIL_TO` / `MAIL_CC` du `.env` quand `mailer` est absent.
 
 ## Étapes
 
@@ -92,7 +97,7 @@ mailer:
 | 3 | Collecte partagée, matching par profil | Une offre stockée si ≥ 1 profil matche ; paires (offre, profil) enregistrées pour scoring |
 | 4 | Sources hôtellerie / management | ✅ fait (commit `7da1488`) : balayage 2026-10-21 + fetchers `lhotellerie` / `michaelpage`, RSS JdP avec `max_items: 50`, requêtes FT/HelloWork — 16/16 sources OK |
 | 5 | `score.py` multi-profils | ✅ fait : persona, geo et **plancher salarial** injectés depuis le profile.yaml (`build_prompt`) ; prompt quentin byte-identique ; 41/41 tests |
-| 6 | `report.py` multi-mailers + baromètre | Mail Gabriela (Camille en cc) ; section volumes/évolution |
+| 6 | `report.py` multi-mailers + baromètre | ✅ fait : destinataires `mailer.to/cc` par profil (fallback `.env`), section **baromètre** volumes/évolution + scores dans le mail (text et HTML) |
 |  7 | Orchestration | `run.sh --all`, systemd timer inchangé, runs tagués par profil — **partiel** : `run.sh` sans `--profile` note et rédige déjà chaque profil actif (sécurité timer, fait à l'étape 5) |
 | 8 | CV Gabriela | ✅ fait : `profiles/gabriela/cv.txt` synthétisé depuis le LinkedIn brut (sans les posts), anonymisé (marqueur `Languages`) |
 | 9 | Recette | `--check`, `--dry` (calibrage keywords), `score --limit 1`, `report --preview`, premier run timer |
