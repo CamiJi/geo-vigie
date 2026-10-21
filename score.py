@@ -35,9 +35,7 @@ from common import (
     profile_of,
 )
 
-PROMPT = """Tu es un recruteur spécialisé en géosciences (géologie, hydrogéologie,\
-géotechnique, mines, hydrocarbures). Tu évalues la pertinence d'une offre \
-pour UN candidat précis.
+PROMPT = """{persona}
 
 ## CV DU CANDIDAT
 
@@ -64,19 +62,92 @@ déterminantes de ce score>",
 }}
 
 Pondération :
-- 45 % adéquation des compétences métier avec le CV
-- 20 % adéquation du niveau (junior/confirmé/senior) par rapport au CV
-- 20 % localisation et mobilité déclarées dans le CV
-- 15 % secteur et type de contrat
+{weights}
 
 Règles :
-- 0 si l'offre n'a rien à voir avec les géosciences.
+{rules}
+"""
+
+# Blocs par défaut du profil de référence (quentin) : sans `persona`,
+# `location` ni `scoring.weights/rules` dans son profile.yaml, le prompt
+# construit reste strictement identique à l'ancien PROMPT mono-profil.
+DEFAULT_PERSONA = """Tu es un recruteur spécialisé en géosciences (géologie, hydrogéologie,\
+géotechnique, mines, hydrocarbures). Tu évalues la pertinence d'une offre \
+pour UN candidat précis."""
+
+DEFAULT_WEIGHTS = """- 45 % adéquation des compétences métier avec le CV
+- 20 % adéquation du niveau (junior/confirmé/senior) par rapport au CV
+- 20 % localisation et mobilité déclarées dans le CV
+- 15 % secteur et type de contrat"""
+
+DEFAULT_RULES = """- 0 si l'offre n'a rien à voir avec les géosciences.
 - Ne pénalise pas l'absence d'expérience que le CV n'a jamais eue (ex. poste \
 à l'étranger si le CV est ouvert à la mobilité).
 - Si l'offre est vague ou une arnaque plausible, plafonne à 40.
 - La justification doit être actionnable : le candidat doit comprendre \
-pourquoi en lisant 2 phrases.
-"""
+pourquoi en lisant 2 phrases."""
+
+
+def _location_sentence(config: dict) -> str:
+    """Contrainte géo factuelle injectée au prompt (pas un filtre dur)."""
+    loc = config.get("location") or {}
+    if not loc:
+        return ""
+    zones = ", ".join(loc.get("zones") or []) or "—"
+    parts = [f"Localisation : base {loc.get('base', '—')} ; "
+             f"zones visées : {zones}."]
+    if loc.get("remote"):
+        parts.append(f"Télétravail : {loc['remote']}.")
+    if loc.get("relocation"):
+        parts.append(f"Relocation : {loc['relocation']}.")
+    return " ".join(parts)
+
+
+def _floor_rule(config: dict) -> str:
+    """Règle de plancher générée depuis `scoring.min_salary_net_month`.
+
+    Sous le plancher → score plafonné à 30 (verdict hors-profil) ; salaire
+    non mentionné → aucun malus, mais signalé dans la justification.
+    """
+    floor = (config.get("scoring") or {}).get("min_salary_net_month")
+    if not floor:
+        return ""
+    floor = int(floor)
+    annual_net = floor * 12
+    annual_gross = round(annual_net / 0.78 / 1000)  # ≈ 34 k€ brut/an
+    return (
+        f"- Plancher salarial : {floor} € net/mois (≈ {annual_net} € net/an, "
+        f"ordre de grandeur ≈ {annual_gross} k€ brut/an). Si l'offre annonce "
+        "un salaire clairement sous ce plancher, plafonne le score à 30 et "
+        "mets le verdict « hors-profil ». Si l'offre ne mentionne aucun "
+        "salaire, NE pénalise pas le score, mais fais commencer `reason` par "
+        "« Salaire non mentionné : »."
+    )
+
+
+def build_prompt(config: dict, *, cv: str, title: str, company: str,
+                 location: str, source: str, description: str) -> str:
+    """Prompt de scoring propre au profil (persona, geo, plancher, règles)."""
+    persona = config.get("persona") or DEFAULT_PERSONA
+    loc = _location_sentence(config)
+    if loc:
+        persona = f"{persona}\n{loc}"
+    weights = (config.get("scoring") or {}).get("weights") or DEFAULT_WEIGHTS
+    rules = (config.get("scoring") or {}).get("rules") or DEFAULT_RULES
+    floor = _floor_rule(config)
+    if floor:
+        rules = f"{rules.rstrip()}\n{floor}"
+    return PROMPT.format(
+        persona=persona,
+        cv=cv,
+        title=title,
+        company=company,
+        location=location,
+        source=source,
+        description=description,
+        weights=weights.strip(),
+        rules=rules.strip(),
+    )
 
 
 def load_cv(config: dict) -> str:
@@ -212,7 +283,8 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
     print(f"Notation de {len(rows)} offre(s) avec {model} (profil : {profile})…")
     ok = failed = 0
     for row in rows:
-        prompt = PROMPT.format(
+        prompt = build_prompt(
+            config,
             cv=cv,
             title=row["title"],
             company=row["company"] or "—",

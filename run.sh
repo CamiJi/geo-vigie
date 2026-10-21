@@ -25,9 +25,22 @@ python collect.py $PROFILE
 
 echo
 echo "== 2/3 Notation =="
-# On borne si --limit est passé, sinon on note tout ce qui est en attente.
-python score.py $LIMIT $PROFILE
+# score.py exige un choix dès deux profils actifs : sans --profile, on
+# note chaque profil actif (le timer systemd n'appelle run.sh sans args).
+if [[ -n "$PROFILE" ]]; then
+  python score.py $LIMIT $PROFILE
+else
+  for p in $(python -c "from common import active_profile_ids; print(' '.join(active_profile_ids()))"); do
+    python score.py $LIMIT --profile "$p"
+  done
+fi
 
 echo
 echo "== 3/3 Rapport =="
-python report.py $PREVIEW $PROFILE
+if [[ -n "$PROFILE" ]]; then
+  python report.py $PREVIEW $PROFILE
+else
+  for p in $(python -c "from common import active_profile_ids; print(' '.join(active_profile_ids()))"); do
+    python report.py $PREVIEW --profile "$p"
+  done
+fi

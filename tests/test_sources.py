@@ -137,7 +137,7 @@ class SourceParserTests(unittest.TestCase):
         self.assertRegex(rows[0]["posted_at"], r"^\d{4}-\d{2}-\d{2}T")
 
     def test_keyword_filter_keeps_geologist_junior_roles_and_drops_noise(self):
-        config = load_config()
+        config = load_config("quentin")
         self.assertNotIn("junior", config["keywords"]["exclude"])
         self.assertTrue(keyword_match(
             config, "Graduate Geologist", "Junior entry-level role", "Glasgow"
@@ -153,7 +153,7 @@ class SourceParserTests(unittest.TestCase):
         )[0])
 
     def test_cv_contact_details_are_redacted_before_scoring(self):
-        cv = load_cv(load_config())
+        cv = load_cv(load_config("quentin"))
         self.assertIn("BRGM", cv)
         self.assertIn("France", cv)
         self.assertNotIn("Contact", cv)

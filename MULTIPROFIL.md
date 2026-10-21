@@ -90,19 +90,36 @@ mailer:
 | 1 | Restructuration config en `profiles/` | `profiles/quentin/profile.yaml` = copie conforme de l'actuel ; pipeline behave à l'identique |
 | 2 | Scission DB (`scores`, `reports`) | Migration SQLite : scores existants → profil `quentin` |
 | 3 | Collecte partagée, matching par profil | Une offre stockée si ≥ 1 profil matche ; paires (offre, profil) enregistrées pour scoring |
-| 4 | Sources hôtellerie / management | **Balayage fait le 2026-10-21** (voir ci-dessous) — reste : coder les fetchers validés |
-| 5 | `score.py` multi-profils | Persona, CV et contraintes géo par profil ; **plancher salarial** appliqué dans le prompt |
+| 4 | Sources hôtellerie / management | ✅ fait (commit `7da1488`) : balayage 2026-10-21 + fetchers `lhotellerie` / `michaelpage`, RSS JdP avec `max_items: 50`, requêtes FT/HelloWork — 16/16 sources OK |
+| 5 | `score.py` multi-profils | ✅ fait : persona, geo et **plancher salarial** injectés depuis le profile.yaml (`build_prompt`) ; prompt quentin byte-identique ; 41/41 tests |
 | 6 | `report.py` multi-mailers + baromètre | Mail Gabriela (Camille en cc) ; section volumes/évolution |
-|  7 | Orchestration | `run.sh --all`, systemd timer inchangé, runs tagués par profil |
-| 8 | CV Gabriela | `profiles/gabriela/cv.txt` synthétisé depuis le LinkedIn brut (sans les posts), anonymisé |
+|  7 | Orchestration | `run.sh --all`, systemd timer inchangé, runs tagués par profil — **partiel** : `run.sh` sans `--profile` note et rédige déjà chaque profil actif (sécurité timer, fait à l'étape 5) |
+| 8 | CV Gabriela | ✅ fait : `profiles/gabriela/cv.txt` synthétisé depuis le LinkedIn brut (sans les posts), anonymisé (marqueur `Languages`) |
 | 9 | Recette | `--check`, `--dry` (calibrage keywords), `score --limit 1`, `report --preview`, premier run timer |
+
+### Bug connu préexistant (découvert à l'étape 5, à trancher)
+
+`keyword_match` applique aux `exclude` une frontière de mot **à gauche
+seulement** : le terme `intern` de quentin exclut toute offre contenant
+« **intern**ationale » (titre, description ou lieu) → pertes silencieuses
+d'offres géo crédibles. Démo :
+
+```
+"Géologue confirmé - Mission internationale" + "déplacements internationaux"
+  → (False, '')   # écarté par `intern`
+```
+
+Piste de correction : frontière **droite** pour les `exclude` (formes
+explicites `stages`, `stagiaires`, `alternances`, `interns`,
+`apprentissage`, `pédagogue…` — les troncatures `pédago` / `apprentiss`
+seraient dépliées). Gabriela évite le piège en n'utilisant pas `intern`.
 
 ## Balayage des sources candidates pour Gabriela (2026-10-21)
 
 Liste fournie par Camille (27 domaines hors LinkedIn) — testées en 3 phases
 joignabilité → URL de recherche → structure HTML.
 
-**Validées, fetchers à coder :**
+**Validées — fetchers codés à l'étape 4 (commit `7da1488`) :**
 
 | Source | Type | Structure relevée |
 |---|---|---|

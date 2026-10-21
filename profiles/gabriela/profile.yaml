@@ -1,0 +1,138 @@
+# geo-vigie — profil gabriela
+# ─────────────────────────────────────────────────────────────────────
+# Profil hôtellerie / management (étape 5 du plan MULTIPROFIL.md).
+# Matière : profil LinkedIn brut du 2026-10-21 (perso/00-inbox, traité).
+# Décisions produit validées : geo Île-de-France + remote accepté (pas de
+# filtre dur — contrainte injectée au prompt), plancher salarial 2 200 €
+# net/mois, posture « sonder le marché » (→ baromètre à l'étape 6).
+# ─────────────────────────────────────────────────────────────────────
+
+id: gabriela
+label: "Gabriela"
+active: true
+
+# CV utilisé pour le scoring, relatif à ce dossier (gitignoré).
+cv_file: cv.txt
+
+# Persona injecté en tête du prompt de scoring (contrat MULTIPROFIL.md).
+persona: >-
+  Tu es un recruteur senior en hôtellerie-restauration et management
+  d'établissements, habitué des profils opérationnels (direction adjointe,
+  gestion de restaurant, événements et banquets, revenue management). Tu
+  évalues la pertinence d'une offre pour un profil précis, dans une
+  démarche de sondage du marché plus que de recherche captive : une offre
+  hors cible mais représentative du secteur garde de la valeur
+  d'information.
+
+# Géographie : injectée au prompt comme contrainte factuelle, jamais de
+# filtre dur à la collecte (voir décisions produit dans MULTIPROFIL.md).
+location:
+  base: "Fontenay-le-Fleury (78)"
+  zones: ["Île-de-France"]
+  remote: "accepté"
+  relocation: "non"
+
+# Mots-clés : une offre est gardée si AU MOINS un terme pertinent matche
+# et AUCUN terme `exclude` (voir common.py → keyword_match).
+#
+#   include_strong : termes distinctifs → titre OU ≥ 2 termes dans le corps
+#                    (hôtel, restaurant, housekeeping, revenue manager…)
+#   include_weak   : génériques → TITRE SEULEMENT (directeur, responsable…)
+#                    → évite que « manager » ou « responsable » decriptions
+#                      quelconques fassent entrer le catalogue entier
+keywords:
+  include_strong:
+    # Hôtellerie — cœur du profil
+    - hôtel
+    - hotel
+    - hospitality
+    - resort
+    # Restauration / cuisine
+    - restaura          # restaurant, restauration, restaurateur
+    - cuisin            # cuisine, cuisinier
+    - food and beverage
+    - food & beverage
+    - banquet
+    - sommelier
+    - barman
+    - bartender
+    - pâtissier
+    - patissier
+    # Métiers hôteliers
+    - housekeeping
+    - front office
+    - reception         # réception, réceptionniste, réceptionnables
+    - gouvernant
+    - concierge
+    - revenue management
+    - revenue manager
+    - rooms division
+    - femme de chambre
+    - valet de chambre
+    - spa
+    # Tourisme / événementiel (elle a géré événements & banquets)
+    - tourisme
+    - tourism
+    - séminaire
+    - seminaire
+    - événement
+    - evenement
+
+  include_weak:
+    # Titre seulement — management (niveau et cible de la candidate)
+    - directeur
+    - directrice
+    - responsable
+    - gérant
+
+  exclude:
+    # Écarte l'offre entière si le terme apparaît n'importe où.
+    - stage
+    - stagiaire
+    - internship
+    - alternance
+    - apprentiss
+    - alternant
+
+# ── Scoring ──────────────────────────────────────────────────────────
+scoring:
+  model: "xiaomi/mimo-v2.6-flash"  # override du .env (LLM_MODEL) — testé le 21/10/2026
+  min_salary_net_month: 2200   # plancher : génère la règle de score (score.py)
+  min_score: 55                # seuil qualité : les adéquations faibles restent masquées
+  top_n: 15                    # nombre max d'offres dans le mail
+  temperature: 0
+  weights: |
+    - 40 % adéquation des compétences métier (management d'équipes, opérations,
+      accueil, process, revenue management) avec le CV
+    - 20 % niveau de responsabilité (direction adjointe / responsabilité
+      d'établissement) par rapport au poste
+    - 25 % situation géographique (Île-de-France, ou télétravail réalisable
+      depuis la base)
+    - 15 % secteur, type de poste et type de contrat
+  rules: |
+    - Les offres hors Île-de-France ne sont pas écartées d'office : avec un
+      télétravail réel le score peut rester haut ; hors zone et sans
+      télétravail, pénalise fortement (pas de relocation).
+    - Ouverture au changement de secteur : valorise les qualités transversales
+      (management, accueil, responsabilité, optimisation des process) ; un
+      poste hors hôtellerie avec télétravail proche de la base peut rester
+      pertinent.
+    - Si l'offre est vague ou une arnaque plausible, plafonne à 40.
+    - La justification doit être actionnable : le candidat doit comprendre
+      pourquoi en lisant 2 phrases.
+
+# ── Rapport ──────────────────────────────────────────────────────────
+report:
+  # Objet du mail — {date} et {count} sont remplacés.
+  subject: "[vigie-gabriela] {count} offre(s) — {date}"
+  # Sections du rapport, dans l'ordre.
+  sections:
+    - top          # offres notées >= min_score
+    - discarded    # compact : celles filtrées par mots-clés
+  send_empty: false          # true = mail quand même si 0 offre
+
+# Mailer dédié (consommé par report.py dès l'étape 6) : elle reçoit sur
+# sa boîte, Camille en copie — même SMTP Brevo global que quentin.
+mailer:
+  to: gabrielascavo@gmail.com
+  cc: aubertcam@gmail.com
