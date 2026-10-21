@@ -18,7 +18,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import escape
 
-from common import db, end_run, load_config, load_env, log_run, now
+from common import db, end_run, load_config, load_env, log_run, now, profile_of
 
 
 def gather(config: dict, conn, *, latest: int | None = None) -> dict:
@@ -26,6 +26,7 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
     sc = config.get("scoring", {})
     min_score = int(sc.get("min_score", 45))
     top_n = int(sc.get("top_n", 15))
+    profile = profile_of(config)
 
     today = date.today().isoformat()
 
@@ -39,33 +40,45 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
         else:
             placeholders = ",".join("?" for _ in active_sources)
             top = conn.execute(
-                "SELECT * FROM offers WHERE keyword_hit = 1 AND score >= ? "
-                f"AND source IN ({placeholders}) "
-                "ORDER BY CASE WHEN posted_at != '' THEN posted_at "
-                "ELSE first_seen END DESC, score DESC, id DESC LIMIT ?",
-                (min_score, *active_sources, latest),
+                "SELECT o.*, s.score, s.score_reason "
+                "FROM offers o "
+                "JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
+                "WHERE o.keyword_hit = 1 AND s.score >= ? "
+                f"AND o.source IN ({placeholders}) "
+                "ORDER BY CASE WHEN o.posted_at != '' THEN o.posted_at "
+                "ELSE o.first_seen END DESC, s.score DESC, o.id DESC LIMIT ?",
+                (profile, min_score, *active_sources, latest),
             ).fetchall()
 
         new_unscored = conn.execute(
-            "SELECT COUNT(*) c FROM offers WHERE score IS NULL "
-            "AND first_seen >= ?", (today,)).fetchone()["c"]
+            "SELECT COUNT(*) c FROM offers o "
+            "LEFT JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
+            "WHERE s.id IS NULL AND o.first_seen >= ?",
+            (profile, today),
+        ).fetchone()["c"]
         return {"top": top, "min_score": min_score,
                 "new_unscored": new_unscored, "today": today,
-                "mode": "latest", "latest": latest}
+                "mode": "latest", "latest": latest, "profile": profile}
 
     top = conn.execute(
-        "SELECT * FROM offers "
-        "WHERE score >= ? AND (reported_at IS NULL OR reported_at >= ?) "
-        "ORDER BY score DESC, id DESC LIMIT ?",
-        (min_score, today, top_n),
+        "SELECT o.*, s.score, s.score_reason "
+        "FROM offers o "
+        "JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
+        "LEFT JOIN reports r ON r.offer_id = o.id AND r.profile_id = ? "
+        "WHERE s.score >= ? AND (r.sent_at IS NULL OR r.sent_at >= ?) "
+        "ORDER BY s.score DESC, o.id DESC LIMIT ?",
+        (profile, profile, min_score, today, top_n),
     ).fetchall()
 
     new_unscored = conn.execute(
-        "SELECT COUNT(*) c FROM offers WHERE score IS NULL "
-        "AND first_seen >= ?", (today,)).fetchone()["c"]
+        "SELECT COUNT(*) c FROM offers o "
+        "LEFT JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
+        "WHERE s.id IS NULL AND o.first_seen >= ?",
+        (profile, today),
+    ).fetchone()["c"]
 
     return {"top": top, "min_score": min_score, "new_unscored": new_unscored,
-            "today": today, "mode": "daily"}
+            "today": today, "mode": "daily", "profile": profile}
 
 
 def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
@@ -218,10 +231,13 @@ def report(config: dict, *, preview: bool = False, force: bool = False,
 
     ids = [r["id"] for r in rows]
     if ids:
-        placeholders = ",".join("?" * len(ids))
-        conn.execute(
-            f"UPDATE offers SET reported_at=? WHERE id IN ({placeholders})",
-            (now(), *ids),
+        sent_at = now()
+        conn.executemany(
+            "INSERT INTO reports (offer_id, profile_id, sent_at) "
+            "VALUES (?,?,?) "
+            "ON CONFLICT(offer_id, profile_id) DO UPDATE SET "
+            "sent_at=excluded.sent_at",
+            [(offer_id, meta["profile"], sent_at) for offer_id in ids],
         )
         conn.commit()
 

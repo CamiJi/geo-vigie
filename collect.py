@@ -365,17 +365,19 @@ def collect(config: dict, *, dry: bool = False, check: bool = False) -> int:
                     description_changed = existing["description"] != description
                     conn.execute(
                         "UPDATE offers SET title=?, company=?, location=?, url=?, "
-                        "description=?, posted_at=?, "
-                        "score=CASE WHEN ? THEN NULL ELSE score END, "
-                        "score_reason=CASE WHEN ? THEN NULL ELSE score_reason END, "
-                        "score_model=CASE WHEN ? THEN NULL ELSE score_model END, "
-                        "scored_at=CASE WHEN ? THEN NULL ELSE scored_at END "
-                        "WHERE fingerprint=?",
+                        "description=?, posted_at=? WHERE fingerprint=?",
                         (title, item.get("company", ""), item.get("location", ""),
-                         item.get("url", ""), description, item.get("posted_at", ""),
-                         description_changed, description_changed, description_changed,
-                         description_changed, fp),
+                         item.get("url", ""), description,
+                         item.get("posted_at", ""), fp),
                     )
+                    if description_changed:
+                        # Offre modifiée en base → à re-noter pour TOUS les
+                        # profils (leurs scores portaient sur l'ancien texte).
+                        conn.execute(
+                            "DELETE FROM scores WHERE offer_id = "
+                            "(SELECT id FROM offers WHERE fingerprint = ?)",
+                            (fp,),
+                        )
                     conn.commit()
 
     if check:

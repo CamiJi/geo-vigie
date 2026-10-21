@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """geo-vigie — note chaque nouvelle offre /100 selon le CV, avec justification.
 
+La notation est par profil : chaque paire (offre, profil) est notée une fois
+dans la table `scores`.
+
 Usage :
-    python score.py            # score tout ce qui est `score IS NULL`
+    python score.py            # score les offres non notées pour le profil
     python score.py --limit 5  # borné (utile pour un premier essai)
     python score.py --rescore  # ignore le score déjà posé
+    python score.py --profile gabriela
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from common import (
     load_env,
     log_run,
     now,
+    profile_of,
 )
 
 PROMPT = """Tu es un recruteur spécialisé en géosciences (géologie, hydrogéologie,\
@@ -167,6 +172,7 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
 
     conn = db()
     run_id = log_run(conn, "score")
+    profile = profile_of(config)
 
     active_sources = [
         source["name"] for source in config.get("sources", [])
@@ -179,15 +185,19 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
         return 0
 
     placeholders = ",".join("?" for _ in active_sources)
-    where = "score IS NULL" if not rescore else "1=1"
+    # Vue par profil : une offre déjà notée POUR ce profil l'est ignorée,
+    # même si un autre profil ne l'a pas encore notée.
+    where = "s.id IS NULL" if not rescore else "1=1"
     sql = (
-        f"SELECT * FROM offers WHERE {where} "
-        f"AND source IN ({placeholders}) "
-        "ORDER BY CASE WHEN posted_at != '' THEN posted_at "
-        "ELSE first_seen END DESC, id DESC"
+        "SELECT o.* FROM offers o "
+        "LEFT JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
+        f"WHERE {where} "
+        f"AND o.source IN ({placeholders}) "
+        "ORDER BY CASE WHEN o.posted_at != '' THEN o.posted_at "
+        "ELSE o.first_seen END DESC, o.id DESC"
     )
-    params: list = list(active_sources)
-    if limit:
+    params: list = [profile, *active_sources]
+    if limit is not None:   # --limit 0 = aucun appel, bornage strict
         sql += " LIMIT ?"
         params.append(int(limit))
     rows = conn.execute(sql, params).fetchall()
@@ -198,7 +208,7 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
         conn.close()
         return 0
 
-    print(f"Notation de {len(rows)} offre(s) avec {model}…")
+    print(f"Notation de {len(rows)} offre(s) avec {model} (profil : {profile})…")
     ok = failed = 0
     for row in rows:
         prompt = PROMPT.format(
@@ -217,9 +227,12 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
             continue
 
         conn.execute(
-            "UPDATE offers SET score=?, score_reason=?, score_model=?, "
-            "scored_at=? WHERE id=?",
-            (data["score"], data["reason"], model, now(), row["id"]),
+            "INSERT INTO scores (offer_id, profile_id, score, score_reason, "
+            "score_model, scored_at) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(offer_id, profile_id) DO UPDATE SET "
+            "score=excluded.score, score_reason=excluded.score_reason, "
+            "score_model=excluded.score_model, scored_at=excluded.scored_at",
+            (row["id"], profile, data["score"], data["reason"], model, now()),
         )
         conn.commit()
         ok += 1

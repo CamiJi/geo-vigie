@@ -4,6 +4,7 @@ __pycache__/
 .env
 db/*.sqlite
 db/*.sqlite-*
+db/*.bak*
 reports/*.html
 reports/*.txt
 logs/*.log

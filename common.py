@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import sqlite3
 import unicodedata
 from datetime import datetime, timezone
@@ -126,6 +127,17 @@ def load_env() -> dict:
 
 
 # ── Base ─────────────────────────────────────────────────────────────
+#
+# Modèle multiprofil : `offers` est le catalogue partagé (jamais de donnée
+# propre à une personne) ; `scores` et `reports` sont des vues PAR PROFIL,
+# clés sur (offer_id, profile_id).
+#
+#   offers  (fingerprint, source, titre, lieu, url, description…)
+#   scores  (offer_id, profile_id, score /100, reason, model, scored_at)
+#   reports (offer_id, profile_id, sent_at)   → mémorise ce qui a été envoyé
+#
+# `migrate_schema()` convertit l'ancien schéma mono-profil (colonnes score et
+# reported_at directement dans offers) une seule fois, après backup.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS offers (
@@ -139,15 +151,30 @@ CREATE TABLE IF NOT EXISTS offers (
     description  TEXT DEFAULT '',
     posted_at    TEXT DEFAULT '',
     first_seen   TEXT NOT NULL,
-    keyword_hit  INTEGER DEFAULT 0,
-    score        INTEGER,
-    score_reason TEXT,
-    score_model  TEXT,
-    scored_at    TEXT,
-    reported_at  TEXT
+    keyword_hit  INTEGER DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_offers_score ON offers(score DESC);
-CREATE INDEX IF NOT EXISTS idx_offers_reported ON offers(reported_at);
+
+CREATE TABLE IF NOT EXISTS scores (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    offer_id     INTEGER NOT NULL REFERENCES offers(id) ON DELETE CASCADE,
+    profile_id   TEXT NOT NULL,
+    score        INTEGER NOT NULL,
+    score_reason TEXT DEFAULT '',
+    score_model  TEXT DEFAULT '',
+    scored_at    TEXT,
+    UNIQUE (offer_id, profile_id)
+);
+CREATE INDEX IF NOT EXISTS idx_scores_profile_score ON scores(profile_id, score DESC);
+CREATE INDEX IF NOT EXISTS idx_scores_offer ON scores(offer_id);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    offer_id     INTEGER NOT NULL REFERENCES offers(id) ON DELETE CASCADE,
+    profile_id   TEXT NOT NULL,
+    sent_at      TEXT NOT NULL,
+    UNIQUE (offer_id, profile_id)
+);
+CREATE INDEX IF NOT EXISTS idx_reports_profile_sent ON reports(profile_id, sent_at);
 
 CREATE TABLE IF NOT EXISTS runs (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -158,13 +185,84 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 """
 
+# Colonnes de l'ancien schéma mono-profil, à migrer puis supprimer.
+LEGACY_OFFER_COLUMNS = ("score", "score_reason", "score_model",
+                        "scored_at", "reported_at")
+
+
+def migrate_schema(conn: sqlite3.Connection, default_profile: str | None = None,
+                   backup_path: Path | None = None) -> bool:
+    """Bascule l'ancien schéma mono-profil → tables scores/reports (une fois).
+
+    - Détecte l'ancien schéma par la présence de la colonne `offers.score`.
+    - Sauvegarde la base (`backup_path`) avant les ALTER, irréversibles.
+    - Les scores/reported existants sont attribués à `default_profile`
+      (le profil unique actif à la migration ; "default" sinon).
+
+    Retourne True si une migration a eu lieu, False si déjà à jour.
+    """
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(offers)")}
+    if "score" not in cols:
+        return False
+
+    profile = default_profile or "default"
+
+    if backup_path is not None:
+        if not backup_path.exists():
+            shutil.copy2(DB_PATH, backup_path)
+
+    conn.executescript(SCHEMA)
+    conn.execute(
+        "INSERT OR IGNORE INTO scores (offer_id, profile_id, score, "
+        "score_reason, score_model, scored_at) "
+        "SELECT id, ?, score, score_reason, score_model, scored_at "
+        "FROM offers WHERE score IS NOT NULL",
+        (profile,),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO reports (offer_id, profile_id, sent_at) "
+        "SELECT id, ?, reported_at FROM offers WHERE reported_at IS NOT NULL",
+        (profile,),
+    )
+    # Les index de l'ancien schéma portent sur des colonnes à supprimer :
+    # SQLite refuse DROP COLUMN tant qu'ils existent.
+    for index in ("idx_offers_score", "idx_offers_reported"):
+        conn.execute(f"DROP INDEX IF EXISTS {index}")
+    for column in LEGACY_OFFER_COLUMNS:
+        conn.execute(f"ALTER TABLE offers DROP COLUMN {column}")
+    conn.commit()
+    return True
+
+
+def _migration_profile() -> str:
+    """Profil destinataire des anciens scores pendant la migration."""
+    try:
+        return default_profile_id() or "default"
+    except SystemExit:
+        # Plusieurs profils actifs : impossible de trancher — les données
+        # historiques partent sous "default" plutôt que d'interrompre le run.
+        return "default"
+
 
 def db() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    migration_profile = _migration_profile()
+    if migrate_schema(conn, default_profile=migration_profile,
+                      backup_path=DB_PATH.parent / (
+                          f"{DB_PATH.name}.bak-"
+                          f"{datetime.now(timezone.utc).date().isoformat()}"
+                          "-pre-multiprofil")):
+        print(f"Base migrée vers le schéma multiprofil (backup créé, "
+              f"scores existants → profil {migration_profile!r}).")
     return conn
+
+
+def profile_of(config: dict) -> str:
+    """profile_id de la config chargée, ou "default" (tests, rétrocompat)."""
+    return config.get("profile_id") or "default"
 
 
 def now() -> str:
