@@ -5,10 +5,13 @@ from unittest.mock import Mock, patch
 
 from common import keyword_match, load_config
 from collect import (
+    _french_date,
     _relative_date,
     fetch_egu,
     fetch_france_travail,
     fetch_hellowork,
+    fetch_lhotellerie,
+    fetch_michaelpage,
     fetch_next_json,
 )
 from score import ask_llm, load_cv
@@ -156,6 +159,82 @@ class SourceParserTests(unittest.TestCase):
         self.assertNotIn("Contact", cv)
         self.assertNotIn("@", cv)
         self.assertNotRegex(cv, r"\b\d{5}\b")
+
+
+class NewFetcherTests(unittest.TestCase):
+    def test_lhotellerie_card_maps_title_location_date_and_skips_bare_links(self):
+        response = Mock(status_code=200, text="""
+        <div class="multiple-items-3 mb-4">
+          <a id="1" href="/emploi/a4bb3f04/femme-valet-de-chambre/_NQQ3lj?UrlPart=x">
+            <div class="card mx-2 p-3">
+              <h3 class="text-primary fw-bold">Femme/Valet de chambre</h3>
+              <p class="location mb-1"><i class="bi"></i>78 - Rambouillet</p>
+              <p class="card-text text-truncate--two-lines mb-1">Best Western Amarys.</p>
+              <p class="date mb-0">21/10/2026</p>
+            </div>
+          </a>
+          <a class="sticky-job-link" href="/emploi/a4bb3f04/x/y?UrlPart=z">
+            <img src="/logo.jpg"/>
+          </a>
+        </div>
+        """)
+        with patch("collect.requests.get", return_value=response):
+            rows = fetch_lhotellerie({
+                "url": "https://www.lhotellerie-restauration.fr/emploi/emploi-hotel-restaurant"
+            }, {})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["title"], "Femme/Valet de chambre")
+        self.assertEqual(rows[0]["location"], "78 - Rambouillet")
+        self.assertTrue(rows[0]["url"].endswith("/emploi/a4bb3f04/femme-valet-de-chambre/_NQQ3lj"))
+        self.assertNotIn("UrlPart", rows[0]["url"])
+        self.assertTrue(rows[0]["posted_at"].startswith("2026-10-21"))
+
+    def test_michaelpage_card_carries_salary_and_remote_into_description(self):
+        response = Mock(status_code=200, text="""
+        <div class="job-tile search-job-tile">
+          <div class="job-title"><h3><a href="/job-detail/directrice-hotel-fh/ref/jn-1">
+            Directrice d'hôtel (H/F)</a></h3></div>
+          <div class="job-properties">
+            <div class="job-location"><i></i> Boulogne-Billancourt</div>
+            <div class="job-contract-type"><i></i> CDI</div>
+            <div class="job-salary"><i></i> 32 000€ - 36 000€ par an</div>
+            <div class="job-nature"><i></i> Télétravail possible</div>
+          </div>
+          <div class="job-summary"><div><p>Pilotage de l'établissement.</p></div></div>
+        </div>
+        """)
+        with patch("collect.requests.get", return_value=response):
+            rows = fetch_michaelpage({"url": "https://www.michaelpage.fr/jobs"}, {})
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["title"], "Directrice d'hôtel (H/F)")
+        self.assertEqual(row["location"], "Boulogne-Billancourt")
+        self.assertTrue(row["url"].endswith("/job-detail/directrice-hotel-fh/ref/jn-1"))
+        self.assertIn("Pilotage de l'établissement", row["description"])
+        self.assertIn("Salaire : 32 000€ - 36 000€ par an", row["description"])
+        self.assertIn("Télétravail possible", row["description"])
+
+    def test_french_absolute_dates_become_sortable_iso(self):
+        self.assertTrue(_french_date("21/10/2026").startswith("2026-10-21T"))
+        self.assertEqual(_french_date("non date"), "non date")
+
+    def test_rss_max_items_keeps_most_recent(self):
+        from collect import fetch_rss
+        response = Mock(status_code=200, content=b"<rss/>")
+        old = (2020, 1, 1, 0, 0, 0, 0, 1, 0)
+        new = (2026, 10, 21, 0, 0, 0, 0, 294, 0)
+        entries = [
+            {"title": "vieille", "link": "http://a/1", "published_parsed": old},
+            {"title": "récente", "link": "http://a/2", "published_parsed": new},
+            {"title": "moyenne", "link": "http://a/3",
+             "published_parsed": (2025, 5, 1, 0, 0, 0, 0, 121, 0)},
+        ]
+        with patch("collect.requests.get", return_value=response), \
+                patch("collect.feedparser.parse",
+                      return_value=Mock(entries=entries)):
+            rows = fetch_rss({"url": "http://x/feed", "max_items": 2,
+                              "fields": {"title": "title", "url": "link"}}, {})
+        self.assertEqual([r["title"] for r in rows], ["récente", "moyenne"])
 
 
 class LlmRetryTests(unittest.TestCase):

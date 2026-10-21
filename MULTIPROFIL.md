@@ -90,12 +90,44 @@ mailer:
 | 1 | Restructuration config en `profiles/` | `profiles/quentin/profile.yaml` = copie conforme de l'actuel ; pipeline behave à l'identique |
 | 2 | Scission DB (`scores`, `reports`) | Migration SQLite : scores existants → profil `quentin` |
 | 3 | Collecte partagée, matching par profil | Une offre stockée si ≥ 1 profil matche ; paires (offre, profil) enregistrées pour scoring |
-| 4 | Sources hôtellerie / management | HelloWork, France Travail (slugs publics), Welcome to the Jungle… — discipline robots.txt + UA + 1 req/s, testées 1 par 1 |
+| 4 | Sources hôtellerie / management | **Balayage fait le 2026-10-21** (voir ci-dessous) — reste : coder les fetchers validés |
 | 5 | `score.py` multi-profils | Persona, CV et contraintes géo par profil ; **plancher salarial** appliqué dans le prompt |
 | 6 | `report.py` multi-mailers + baromètre | Mail Gabriela (Camille en cc) ; section volumes/évolution |
 |  7 | Orchestration | `run.sh --all`, systemd timer inchangé, runs tagués par profil |
 | 8 | CV Gabriela | `profiles/gabriela/cv.txt` synthétisé depuis le LinkedIn brut (sans les posts), anonymisé |
 | 9 | Recette | `--check`, `--dry` (calibrage keywords), `score --limit 1`, `report --preview`, premier run timer |
+
+## Balayage des sources candidates pour Gabriela (2026-10-21)
+
+Liste fournie par Camille (27 domaines hors LinkedIn) — testées en 3 phases
+joignabilité → URL de recherche → structure HTML.
+
+**Validées, fetchers à coder :**
+
+| Source | Type | Structure relevée |
+|---|---|---|
+| `lhotellerie-restauration.fr/emploi/emploi-hotel-restaurant` | HTML cards | `div.multiple-items-3.mb-4` : titre, lieu, extrait, lien `/emploi/<id>/` — pagination `?page=2` OK, 2 183 offres, filtres région (IDF) |
+| `michaelpage.fr/jobs` | HTML cards | `div.job-tile.search-job-tile` : titre, lieu, contrat, **salaire affiché (50-60 k€/an)**, lien `/job-detail/…/ref/…` → plancher salarial exploitable au scoring |
+| `journaldespalaces.com/carriere/feed/rss.xml` | RSS (type déjà supporté) | offres hôtellerie de luxe réelles, quasi gratuit à intégrer |
+
+**Requêtes à ajouter sur les sources déjà actives** (réutilisent les
+fetchers existants) : France Travail + HelloWork avec mots-clés hôtellerie
+(`directeur hôtel`, `responsable établissement`, `revenue manager`…).
+
+**Bloquées / mortes (confirmé, à ne pas retester)** :
+- 403 ou challenge JS : APEC, Indeed, Jooble, Glassdoor, Cadremploi,
+  eFinancialCareers, Adzuna (site), hospitality-on (section emploi).
+- DNS/domaine inexistant : jobtourisme, jobseko, place-emploi-public,
+  jobs.compta-online, dafmag (SSL), cadresmploi.
+- SPA/JS sans listing HTML (**démontré le 21/10, pas supposé**) : HTML brut
+  sans une seule fiche (WTTJ 556 ko vides, Caterer, Robert Half → page
+  catégories), 29 bundles JS scannés sans endpoint de recherche d'offres
+  (seuls des endpoints utilisateurs/sessions), `sitemap.xml` 404 (Caterer),
+  aucun formulaire GET (RH), endpoints devinés → 404.
+  → **Réouvrables** avec l'URL XHR réelle relevée manuellement une fois dans
+  l'onglet Réseau du navigateur (WTTJ priorité 1 : management IDF + salaires).
+- LinkedIn : exclu ToS (décision initiale du projet).
+- API Adzuna : injoignable depuis ce réseau + clé gratuite requise → piste reportée.
 
 ## Risques
 

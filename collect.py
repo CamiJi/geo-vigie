@@ -180,6 +180,20 @@ def _relative_date(text: str) -> str:
     return (current - delta).isoformat(timespec="seconds")
 
 
+def _french_date(text: str) -> str:
+    """Date absolue française « JJ/MM/AAAA » → ISO triable, sinon texte brut."""
+    value = clean_html(text)
+    match = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", value)
+    if not match:
+        return value
+    day, month, year = (int(g) for g in match.groups())
+    try:
+        return datetime(year, month, day, tzinfo=timezone.utc).isoformat(
+            timespec="seconds")
+    except ValueError:
+        return value
+
+
 def fetch_hellowork(source: dict, config: dict) -> list[dict]:
     """Parse public HelloWork search cards; configured URLs have no query string."""
     resp = requests.get(source["url"], headers={"User-Agent": UA},
@@ -259,9 +273,21 @@ def fetch_rss(source: dict, config: dict) -> list[dict]:
     resp.raise_for_status()
     parsed = feedparser.parse(resp.content)
 
+    entries = list(parsed.entries)
+    # Certains flux (ex. Journal des Palaces) contiennent des années d'offres :
+    # `max_items` garde les plus récentes, sans exploser le scoring.
+    max_items = int(source.get("max_items") or 0)
+    if max_items and len(entries) > max_items:
+        entries = sorted(
+            entries,
+            key=lambda e: (e.get("published_parsed") is not None,
+                           e.get("published_parsed") or ()),
+            reverse=True,
+        )[:max_items]
+
     fields = source.get("fields", {})
     out = []
-    for entry in parsed.entries:
+    for entry in entries:
         row = {}
         for key, path in fields.items():
             if not path:
@@ -273,6 +299,90 @@ def fetch_rss(source: dict, config: dict) -> list[dict]:
     return out
 
 
+def fetch_lhotellerie(source: dict, config: dict) -> list[dict]:
+    """Parse L'Hôtellerie-Restauration job cards (Titelive).
+
+    Une offre = un `<a href="/emploi/<hex>/…">` enveloppant un div.card avec
+    h3 (titre), p.location, p.card-text (résumé), p.date (JJ/MM/AAAA).
+    Les liens logo/`sticky-job-link` sans card sont écartés naturellement.
+    """
+    resp = requests.get(source["url"], headers={"User-Agent": UA},
+                        timeout=TIMEOUT)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    base = source["url"].split("/emploi/")[0]
+    out, seen = [], set()
+    for anchor in soup.select("a[href]"):
+        href = anchor.get("href", "")
+        match = re.match(r"(/emploi/[0-9a-f]{8}/[^?]+)", href)
+        if not match:
+            continue
+        title_tag = anchor.select_one("h3.text-primary.fw-bold")
+        location_tag = anchor.select_one("p.location")
+        if not title_tag or not location_tag:
+            continue
+        clean_url = urljoin(base, match.group(1))
+        if clean_url in seen:
+            continue
+        seen.add(clean_url)
+        date_tag = anchor.select_one("p.date")
+        desc_tag = anchor.select_one("p.card-text")
+        out.append({
+            "title": clean_html(title_tag.get_text(" ", strip=True)),
+            "company": "",
+            "location": clean_html(location_tag.get_text(" ", strip=True)),
+            "url": clean_url,
+            "description": clean_html(desc_tag.get_text(" ", strip=True)
+                                       if desc_tag else ""),
+            "posted_at": _french_date(date_tag.get_text(strip=True)
+                                      if date_tag else ""),
+        })
+    return out
+
+
+def fetch_michaelpage(source: dict, config: dict) -> list[dict]:
+    """Parse Michael Page job tiles (lieu, contrat, SALAIRE, télétravail).
+
+    Le salaire et la nature du poste sont injectés dans la description :
+    ils alimentent directement le plancher salarial au scoring.
+    """
+    resp = requests.get(source["url"], headers={"User-Agent": UA},
+                        timeout=TIMEOUT)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+    out = []
+    for card in soup.select("div.job-tile"):
+        link = card.select_one("h3 a[href]")
+        if not link:
+            continue
+        pieces = []
+        for cls, label in (("job-contract-type", "Contrat"),
+                           ("job-salary", "Salaire"),
+                           ("job-nature", "Nature")):
+            tag = card.select_one(f".{cls}")
+            if tag:
+                value = clean_html(tag.get_text(" ", strip=True))
+                if value:
+                    pieces.append(f"{label} : {value}")
+        summary = card.select_one(".job-summary")
+        description = (clean_html(summary.get_text(" ", strip=True))
+                       if summary else "")
+        if pieces:
+            description = (description + " — " + " · ".join(pieces)
+                           ).strip(" —")
+        location = card.select_one(".job-location")
+        out.append({
+            "title": clean_html(link.get_text(" ", strip=True)),
+            "company": "",
+            "location": clean_html(location.get_text(" ", strip=True)
+                                    if location else ""),
+            "url": urljoin(source["url"], link["href"]),
+            "description": description,
+            "posted_at": "",
+        })
+    return out
+
+
 FETCHERS = {
     "json": fetch_json,
     "rss": fetch_rss,
@@ -280,6 +390,8 @@ FETCHERS = {
     "egu": fetch_egu,
     "hellowork": fetch_hellowork,
     "france_travail": fetch_france_travail,
+    "lhotellerie": fetch_lhotellerie,
+    "michaelpage": fetch_michaelpage,
 }
 
 

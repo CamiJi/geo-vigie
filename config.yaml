@@ -115,6 +115,59 @@ sources:
     enabled: true
     url: https://candidat.francetravail.fr/offres/emploi/geologue/s19m4
 
+  # ── Hôtellerie / management (profil gabriela, étape 4 — 2026-10-21) ──
+  # Balayage + robots.txt vérifiés le 2026-10-21 (voir MULTIPROFIL.md).
+  # Le matching par profil (table matches) filtre ensuite : ces offres ne
+  # sont gardées que pour les profils dont les mots-clés les matchent.
+
+  # Jobboard du journal L'Hôtellerie-Restauration : cards HTML, filtre
+  # région, pagination ?page=N. robots.txt n'interdit pas /emploi/ publics.
+  - name: lhotellerie-restauration
+    type: lhotellerie
+    enabled: true
+    url: https://www.lhotellerie-restauration.fr/emploi/emploi-hotel-restaurant
+
+  # Michael Page : management/finance, cards avec lieu, contrat, SALAIRE et
+  # télétravail (injectés en description → plancher salarial au scoring).
+  # robots.txt autorise /jobs et /job-detail.
+  - name: michaelpage-jobs
+    type: michaelpage
+    enabled: true
+    url: https://www.michaelpage.fr/jobs
+
+  # Journal des Palaces : RSS officiel de la section carrière (offres
+  # hôtellerie de luxe FR/international). ~2 365 entrées cumulées → on ne
+  # garde que les 50 plus récentes (max_items) sans exploiter le scoring.
+  - name: journaldespalaces-rss
+    type: rss
+    enabled: true
+    url: https://www.journaldespalaces.com/carriere/feed/rss.xml
+    max_items: 50
+    fields:
+      title: title
+      company: society
+      location: locality
+      url: link
+      posted_at: published
+      description: description
+
+  # HelloWork / France Travail : requêtes dédiées hôtellerie en plus des
+  # recherches géologie (fetchers existants, URL testées 200 avec cartes).
+  - name: hellowork-directeur-hotel
+    type: hellowork
+    enabled: true
+    url: https://www.hellowork.com/fr-fr/emploi/metier_directeur-d-hotel.html
+
+  - name: hellowork-hotellerie-restauration
+    type: hellowork
+    enabled: true
+    url: https://www.hellowork.com/fr-fr/emploi/mot-cle_hotellerie-restauration.html
+
+  - name: france-travail-directeur-hotel
+    type: france_travail
+    enabled: true
+    url: "https://candidat.francetravail.fr/offres/recherche?motsCles=directeur%20hotel"
+
   # EURAXESS est en pause : le formulaire de recherche est en POST et le
   # paramètre keyword de l'URL testée ne filtrait pas les cartes observées.
   # Ne pas l'activer avant d'avoir résolu et testé le vrai contrat de recherche.
