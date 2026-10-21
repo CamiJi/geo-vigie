@@ -409,11 +409,13 @@ def main() -> int:
                         help="teste les sources sans écrire")
     parser.add_argument("--dry", action="store_true",
                         help="affiche le filtrage sans écrire en base")
+    parser.add_argument("--profile", default=None,
+                        help="profil à utiliser (défaut : profil unique actif)")
     args = parser.parse_args()
 
     if args.check:
         print("Test de joignabilité des sources…")
-    return collect(load_config(), dry=args.dry, check=args.check)
+    return collect(load_config(args.profile), dry=args.dry, check=args.check)
 
 
 if __name__ == "__main__":

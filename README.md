@@ -31,6 +31,23 @@ collect.py  →  score.py  →  report.py
 
 `run.sh` enchaîne les trois.
 
+## Profils (multiprofil — étape 1 posée)
+
+Les règles propres à une personne vivent dans `profiles/<id>/profile.yaml`
+(mots-clés, CV, seuils, sujet de mail) ; `config.yaml` ne garde que le
+partagé (`general`, `sources`). `common.load_config()` fusionne les deux :
+
+```bash
+python collect.py --profile quentin   # défaut : profil unique actif
+python score.py   --profile quentin
+VIGIE_PROFILE=quentin ./run.sh        # variable alternative
+```
+
+Dès **deux profils actifs**, `--profile` (ou `VIGIE_PROFILE`) devient
+obligatoire — le robot refuse de deviner. Ajouter un profil = créer
+`profiles/<id>/profile.yaml` + `profiles/<id>/cv.txt`. Voir `MULTIPROFIL.md`
+pour le plan complet (Gabriela, mailers par profil, baromètre).
+
 ## Installation
 
 ```bash

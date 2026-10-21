@@ -239,8 +239,10 @@ def main() -> int:
                         help="envoie même sans offre")
     parser.add_argument("--latest", type=int, default=None,
                         help="envoie les N offres les plus récentes, sans seuil de score")
+    parser.add_argument("--profile", default=None,
+                        help="profil à utiliser (défaut : profil unique actif)")
     args = parser.parse_args()
-    return report(load_config(), preview=args.preview, force=args.force,
+    return report(load_config(args.profile), preview=args.preview, force=args.force,
                   latest=args.latest)
 
 

@@ -237,8 +237,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--rescore", action="store_true")
+    parser.add_argument("--profile", default=None,
+                        help="profil à utiliser (défaut : profil unique actif)")
     args = parser.parse_args()
-    return score(load_config(), limit=args.limit, rescore=args.rescore)
+    return score(load_config(args.profile), limit=args.limit, rescore=args.rescore)
 
 
 if __name__ == "__main__":

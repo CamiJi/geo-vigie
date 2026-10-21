@@ -11,90 +11,13 @@ general:
   max_description_chars: 1500   # troncature avant envoi au LLM (coût)
   request_delay_seconds: 1     # délai entre les sources, usage léger
 
-# CV utilisé pour le scoring.
-cv_file: cv/candidate.txt
-
-# Mots-clés : une offre est gardée si elle contient AU MOINS un terme pertinent
-# et AUCUN terme `exclude`. Matching à frontière de mot, insensible aux
-# accents/casse (voir common.py → keyword_match).
-#
-#   include_strong : distinctifs (géolog, métallogénie…) → cherchés partout
-#                    (titre + description + lieu)
-#   include_weak   : génériques (terrain, ressources…) → TITRE SEULEMENT
-#                    → sinon « développement de carrières » ou le mot allemand
-#                      « Terminierung » (qui contient "minier") font passer
-#                      n'importe quelle offre
-keywords:
-  include_strong:
-    # Géosciences — le cœur du sujet
-    - géolog
-    - hydrogéolog
-    - hydrogeolog
-    - géotechni
-    - geotechni
-    - pédolog
-    - pedolog
-    - géophysique
-    - geophysic
-    - géochimie
-    - geochem
-    - métallogén
-    - metallogeny
-    - pétrolier
-    - petrolier
-    - pétrole
-    - petroleum
-    - hydrocarbure
-    - sismique
-    - carottage
-    - core logging
-    - ore deposit
-    - mineral exploration
-    - exploration geologist
-    # Mines / extraction / exploration (profil candidat)
-    - gisement
-    - gisements
-    - gisement
-    - mineralisation
-    - réservoir
-    - reservoir
-    - extractif
-    # Familles élargies
-    - geoscience
-    - earth science
-    - bassin versant
-    - hydrologie
-    - geothermal
-    - géothermie
-
-  include_weak:
-    # Termes de secteur génériques — TITRE UNIQUEMENT
-    - mining
-    - minier
-    - minière
-    - mine
-    - exploration
-    - forage
-    - drill
-    - deposit
-    - dépôt
-
-  exclude:
-    # Ne jamais les chercher dans la description pour `include_*` :
-    # on écarte l'offre entière si le terme apparaît n'importe où.
-    - stage
-    - stagiaire
-    - internship
-    - intern
-    - alternance
-    - apprentiss
-    - pédago        # évite "pédagogue"
-    - doctorat      # le profil fourni est de niveau Master, sans PhD
-    - phd
-    - post-doctorat
-    - postdoc
-    - postdoctoral
-    - alternant
+# ── Profils ──────────────────────────────────────────────────────────
+# Depuis le passage multiprofil (2026-10-21, voir MULTIPROFIL.md), les
+# règles propres à une personne vivent dans `profiles/<id>/profile.yaml` :
+# mots-clés, CV, seuils de scoring, sujet de rapport, mailer.
+# Ce fichier ne garde que le PARTAGÉ : généralités et sources.
+# `common.load_config()` fusionne ce fichier + un profil ; avec un profil
+# unique actif, il est choisi automatiquement.
 
 # ── Sources ──────────────────────────────────────────────────────────
 # type: json | rss
@@ -204,19 +127,6 @@ sources:
   # de scraping/navigation (terms §2.7), malgré un JSON-LD techniquement lisible.
   # LinkedIn exclu : pas d'API publique de recherche et scraping interdit par ToS.
 
-# ── Scoring ──────────────────────────────────────────────────────────
-scoring:
-  model: "xiaomi/mimo-v2.6-flash"  # override du .env (LLM_MODEL) — testé le 21/10/2026
-  min_score: 55              # seuil qualité : les adéquations faibles restent masquées
-  top_n: 15                  # nombre max d'offres dans le mail
-  temperature: 0
+# ── Scoring / rapport ────────────────────────────────────────────────
+# (déplacés dans profiles/<id>/profile.yaml)
 
-# ── Rapport ──────────────────────────────────────────────────────────
-report:
-  # Objet du mail — {date} et {count} sont remplacés.
-  subject: "[geo-vigie] {count} offre(s) — {date}"
-  # Sections du rapport, dans l'ordre.
-  sections:
-    - top          # offres notées >= min_score
-    - discarded    # compact : celles filtrées par mots-clés
-  send_empty: false          # true = mail quand même si 0 offre

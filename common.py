@@ -18,9 +18,83 @@ DB_PATH = ROOT / "db" / "vigie.sqlite"
 
 # ── Config ───────────────────────────────────────────────────────────
 
-def load_config() -> dict:
+PROFILES_DIR = ROOT / "profiles"
+
+
+def load_config(profile: str | None = None) -> dict:
+    """Charge `config.yaml` (partagé) fusionné avec un profil.
+
+    - `profile` : nom d'un dossier de `profiles/` (ex. `"gabriela"`).
+      Si omis, le **profil unique actif** est choisi automatiquement ;
+      avec plusieurs profils actifs, un choix est obligatoire (erreur claire).
+
+    La fusion est simple : les clés du `profile.yaml` écrasent celles de
+    `config.yaml` (blocs complets : keywords, scoring, report, cv_file) —
+    `general` et `sources` restent partagés. `cv_file` est renvoyé en
+    **chemin absolu**, relatif au dossier du profil.
+    """
     with open(ROOT / "config.yaml", encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+        config = yaml.safe_load(fh) or {}
+
+    profile_id = profile or default_profile_id()
+    if profile_id is None:
+        # Rétrocompat : aucun profil encore configuré → l'ancien YAML seul.
+        return config
+
+    profile_file = PROFILES_DIR / profile_id / "profile.yaml"
+    if not profile_file.exists():
+        known = ", ".join(list_profiles()) or "aucun"
+        raise SystemExit(
+            f"Profil inconnu : {profile_id!r} (profils disponibles : {known})")
+
+    with open(profile_file, encoding="utf-8") as fh:
+        prof = yaml.safe_load(fh) or {}
+
+    merged = {**config, **prof}
+    merged["profile_id"] = profile_id
+
+    cv_rel = prof.get("cv_file")
+    if cv_rel and not Path(cv_rel).is_absolute():
+        merged["cv_file"] = str(PROFILES_DIR / profile_id / cv_rel)
+    return merged
+
+
+def list_profiles() -> list[str]:
+    """Profils disponibles : dossiers de `profiles/` avec un profile.yaml."""
+    if not PROFILES_DIR.is_dir():
+        return []
+    return sorted(
+        entry.name for entry in PROFILES_DIR.iterdir()
+        if entry.is_dir() and (entry / "profile.yaml").exists()
+    )
+
+
+def default_profile_id() -> str | None:
+    """Profil actif unique, ou None s'il n'y en a aucun.
+
+    Plusieurs profils actifs → impossible de deviner : il faut `--profile`
+    (ou VIGIE_PROFILE dans l'environnement).
+    """
+    env_choice = os.environ.get("VIGIE_PROFILE")
+    if env_choice:
+        return env_choice
+    active = [pid for pid in list_profiles()
+              if _load_profile_raw(pid).get("active", True)]
+    if len(active) == 1:
+        return active[0]
+    if not active:
+        return None
+    raise SystemExit(
+        "Plusieurs profils actifs : préciser le profil "
+        f"({'--profile ' + ' | '.join(active)}) ou VIGIE_PROFILE.")
+
+
+def _load_profile_raw(profile_id: str) -> dict:
+    path = PROFILES_DIR / profile_id / "profile.yaml"
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
 
 
 def load_env() -> dict:

@@ -9,3 +9,7 @@ reports/*.txt
 logs/*.log
 cv/*.pdf
 cv/*.txt
+profiles/*/cv.txt
+profiles/*/*.pdf
+profiles/*/cv/*.txt
+profiles/*/cv/*.pdf
