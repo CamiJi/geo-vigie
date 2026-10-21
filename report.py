@@ -52,9 +52,10 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
 
         new_unscored = conn.execute(
             "SELECT COUNT(*) c FROM offers o "
+            "JOIN matches m ON m.offer_id = o.id AND m.profile_id = ? "
             "LEFT JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
             "WHERE s.id IS NULL AND o.first_seen >= ?",
-            (profile, today),
+            (profile, profile, today),
         ).fetchone()["c"]
         return {"top": top, "min_score": min_score,
                 "new_unscored": new_unscored, "today": today,
@@ -72,9 +73,10 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
 
     new_unscored = conn.execute(
         "SELECT COUNT(*) c FROM offers o "
+        "JOIN matches m ON m.offer_id = o.id AND m.profile_id = ? "
         "LEFT JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
         "WHERE s.id IS NULL AND o.first_seen >= ?",
-        (profile, today),
+        (profile, profile, today),
     ).fetchone()["c"]
 
     return {"top": top, "min_score": min_score, "new_unscored": new_unscored,

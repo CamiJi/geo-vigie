@@ -34,6 +34,15 @@ def _make_conn() -> sqlite3.Connection:
             UNIQUE (offer_id, profile_id)
         )
     """)
+    conn.execute("""
+        CREATE TABLE matches (
+            id INTEGER PRIMARY KEY,
+            offer_id INTEGER NOT NULL,
+            profile_id TEXT NOT NULL,
+            term TEXT DEFAULT '',
+            UNIQUE (offer_id, profile_id)
+        )
+    """)
     conn.executemany(
         "INSERT INTO offers VALUES (?, ?, ?, ?, ?)",
         [

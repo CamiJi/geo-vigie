@@ -185,18 +185,19 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
         return 0
 
     placeholders = ",".join("?" for _ in active_sources)
-    # Vue par profil : une offre déjà notée POUR ce profil l'est ignorée,
-    # même si un autre profil ne l'a pas encore notée.
+    # Vue par profil : l'offre n'est scorable que si les mots-clés du profil
+    # l'ont retenue (table matches) ET si elle n'est pas déjà notée pour lui.
     where = "s.id IS NULL" if not rescore else "1=1"
     sql = (
         "SELECT o.* FROM offers o "
+        "JOIN matches m ON m.offer_id = o.id AND m.profile_id = ? "
         "LEFT JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
         f"WHERE {where} "
         f"AND o.source IN ({placeholders}) "
         "ORDER BY CASE WHEN o.posted_at != '' THEN o.posted_at "
         "ELSE o.first_seen END DESC, o.id DESC"
     )
-    params: list = [profile, *active_sources]
+    params: list = [profile, profile, *active_sources]
     if limit is not None:   # --limit 0 = aucun appel, bornage strict
         sql += " LIMIT ?"
         params.append(int(limit))

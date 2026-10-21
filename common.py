@@ -60,6 +60,16 @@ def load_config(profile: str | None = None) -> dict:
     return merged
 
 
+def load_shared_config() -> dict:
+    """Config partagée seule (general, sources) — sans résolution de profil.
+
+    Utilisée par la collecte, qui matche tous les profils actifs et n'est
+    propre à personne (éviterait de lever « plusieurs profils actifs »).
+    """
+    with open(ROOT / "config.yaml", encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
 def list_profiles() -> list[str]:
     """Profils disponibles : dossiers de `profiles/` avec un profile.yaml."""
     if not PROFILES_DIR.is_dir():
@@ -167,6 +177,17 @@ CREATE TABLE IF NOT EXISTS scores (
 CREATE INDEX IF NOT EXISTS idx_scores_profile_score ON scores(profile_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_scores_offer ON scores(offer_id);
 
+CREATE TABLE IF NOT EXISTS matches (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    offer_id     INTEGER NOT NULL REFERENCES offers(id) ON DELETE CASCADE,
+    profile_id   TEXT NOT NULL,
+    term         TEXT DEFAULT '',
+    matched_at   TEXT NOT NULL,
+    UNIQUE (offer_id, profile_id)
+);
+CREATE INDEX IF NOT EXISTS idx_matches_profile ON matches(profile_id);
+CREATE INDEX IF NOT EXISTS idx_matches_offer ON matches(offer_id);
+
 CREATE TABLE IF NOT EXISTS reports (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     offer_id     INTEGER NOT NULL REFERENCES offers(id) ON DELETE CASCADE,
@@ -257,12 +278,52 @@ def db() -> sqlite3.Connection:
                           "-pre-multiprofil")):
         print(f"Base migrée vers le schéma multiprofil (backup créé, "
               f"scores existants → profil {migration_profile!r}).")
+    backfill_matches(conn, default_profile=migration_profile)
     return conn
 
 
 def profile_of(config: dict) -> str:
     """profile_id de la config chargée, ou "default" (tests, rétrocompat)."""
     return config.get("profile_id") or "default"
+
+
+def active_profile_ids() -> list[str]:
+    """Profils actifs (du plus ancien au plus récent en ordre alpha)."""
+    return [pid for pid in list_profiles()
+            if _load_profile_raw(pid).get("active", True)]
+
+
+def profile_configs(profile: str | None = None) -> dict[str, dict]:
+    """Config fusionnée des profils à matcher pendant la collecte.
+
+    - `profile` donné → ce profil seul (usage --profile / debug).
+    - sinon → **tous les profils actifs** (collecte partagée) : une offre
+      utile à Gabriela est retenue même si elle est hors-mots-clés de Quentin.
+    """
+    ids = [profile] if profile else active_profile_ids()
+    return {pid: load_config(pid) for pid in ids}
+
+
+def backfill_matches(conn: sqlite3.Connection, default_profile: str | None = None) -> bool:
+    """Offres préexistantes sans aucun match → attribuées à un profil.
+
+    Les offres en base ont été filtrées par les mots-clés de Quentin avant
+    la table `matches` : le premier run les y rattache toutes, une seule fois
+    (condition idempotente : ne s'exécute que si la table est vide).
+    """
+    if not conn.execute("SELECT COUNT(*) FROM offers").fetchone()[0]:
+        return False
+    if conn.execute("SELECT COUNT(*) FROM matches").fetchone()[0]:
+        return False
+    profile = default_profile or "default"
+    conn.execute(
+        "INSERT OR IGNORE INTO matches (offer_id, profile_id, matched_at) "
+        "SELECT id, ?, ? FROM offers",
+        (profile, now()),
+    )
+    conn.commit()
+    print(f"matches backfillés → profil {profile!r} (offres préexistantes).")
+    return True
 
 
 def now() -> str:

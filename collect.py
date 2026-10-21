@@ -27,9 +27,10 @@ from common import (
     end_run,
     fingerprint,
     keyword_match,
-    load_config,
+    load_shared_config,
     log_run,
     now,
+    profile_configs,
     slug,
 )
 
@@ -282,15 +283,48 @@ FETCHERS = {
 }
 
 
+# ── Matching par profil ──────────────────────────────────────────────
+
+def _match_profiles(profiles: dict, title: str, description: str,
+                    location: str) -> dict[str, str]:
+    """{profile_id: terme retenu} pour les profils dont les mots-clés matchent."""
+    matched: dict[str, str] = {}
+    for pid, pconf in profiles.items():
+        kept, term = keyword_match(pconf, title, description, location)
+        if kept:
+            matched[pid] = term
+    return matched
+
+
+def _update_offer(conn, fp: str, title: str, item: dict, description: str,
+                  location: str) -> None:
+    conn.execute(
+        "UPDATE offers SET title=?, company=?, location=?, url=?, "
+        "description=?, posted_at=? WHERE fingerprint=?",
+        (title, item.get("company", ""), location, item.get("url", ""),
+         description, item.get("posted_at", ""), fp),
+    )
+
+
 # ── Collecte ─────────────────────────────────────────────────────────
 
-def collect(config: dict, *, dry: bool = False, check: bool = False) -> int:
+def collect(config: dict, *, dry: bool = False, check: bool = False,
+            restrict: str | None = None) -> int:
     conn = None if dry or check else db()
     run_id = log_run(conn, "collect") if conn else None
     stats = {"kept": 0, "keyword_out": 0, "duplicate": 0, "error": 0,
              "sources": 0}
     problems: list[str] = []
     run_fingerprints: set[str] = set()
+    profile_hits: dict[str, int] = {}
+
+    # Collecte partagée : on matche TOUS les profils actifs (ou un seul si
+    # --profile l'a restreint pour le debug). Le check ne matche rien.
+    profiles = {} if check else profile_configs(restrict)
+    if not profiles and not check:
+        raise SystemExit(
+            "Aucun profil actif à matcher — créer profiles/<id>/profile.yaml "
+            "ou activer un profil (`active: true`).")
 
     delay = float(config.get("general", {}).get("request_delay_seconds", 1))
     for index, source in enumerate(config.get("sources", [])):
@@ -323,25 +357,53 @@ def collect(config: dict, *, dry: bool = False, check: bool = False) -> int:
             if not title:
                 continue
             description = (item.get("description") or "")[:limit]
+            location = item.get("location", "")
 
-            kept, term = keyword_match(
-                config, title, description, item.get("location", "")
-            )
-            if not kept:
-                stats["keyword_out"] += 1
+            if dry:
+                matched = _match_profiles(profiles, title, description, location)
+                if not matched:
+                    stats["keyword_out"] += 1
+                    continue
+                stats["kept"] += 1
+                for pid in matched:
+                    profile_hits[pid] = profile_hits.get(pid, 0) + 1
+                detail = ", ".join(f"{pid}:{term}" for pid, term in matched.items())
+                print(f"  KEEP {title[:70]!r} [{detail}]")
                 continue
 
-            fp = fingerprint(title, item.get("company", ""),
-                             item.get("location", ""), item.get("url", ""))
-
+            fp = fingerprint(title, item.get("company", ""), location,
+                             item.get("url", ""))
             if fp in run_fingerprints:
                 stats["duplicate"] += 1
                 continue
             run_fingerprints.add(fp)
 
-            if dry:
-                stats["kept"] += 1
-                print(f"  KEEP {title[:70]!r} [{term}]")
+            existing = conn.execute(
+                "SELECT id, source, description FROM offers WHERE fingerprint = ?",
+                (fp,),
+            ).fetchone()
+            description_changed = (
+                existing is not None
+                and existing["source"] == source["name"]
+                and existing["description"] != description
+            )
+
+            # Matching PAR PROFIL : retenue si AU MOINS un profil actif la
+            # matche — une offre utile à Gabriela entre même si elle est
+            # hors-mots-clés de Quentin.
+            matched = _match_profiles(profiles, title, description, location)
+
+            if not matched:
+                if description_changed:
+                    # Contenu devenu hors-profil : scores et matches
+                    # portaient sur l'ancien texte → invalidation.
+                    conn.execute("DELETE FROM scores WHERE offer_id = ?",
+                                 (existing["id"],))
+                    conn.execute("DELETE FROM matches WHERE offer_id = ?",
+                                 (existing["id"],))
+                    _update_offer(conn, fp, title, item, description, location)
+                    conn.commit()
+                stats["keyword_out"] += 1
                 continue
 
             cur = conn.execute(
@@ -350,35 +412,34 @@ def collect(config: dict, *, dry: bool = False, check: bool = False) -> int:
                 " description, posted_at, first_seen, keyword_hit) "
                 "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (fp, source["name"], title, item.get("company", ""),
-                 item.get("location", ""), item.get("url", ""), description,
+                 location, item.get("url", ""), description,
                  item.get("posted_at", ""), now(), 1),
             )
             if cur.rowcount:
                 stats["kept"] += 1
+                offer_id = cur.lastrowid
             else:
                 stats["duplicate"] += 1
-                existing = conn.execute(
-                    "SELECT source, description FROM offers WHERE fingerprint = ?",
-                    (fp,),
-                ).fetchone()
-                if existing and existing["source"] == source["name"]:
-                    description_changed = existing["description"] != description
-                    conn.execute(
-                        "UPDATE offers SET title=?, company=?, location=?, url=?, "
-                        "description=?, posted_at=? WHERE fingerprint=?",
-                        (title, item.get("company", ""), item.get("location", ""),
-                         item.get("url", ""), description,
-                         item.get("posted_at", ""), fp),
-                    )
-                    if description_changed:
-                        # Offre modifiée en base → à re-noter pour TOUS les
-                        # profils (leurs scores portaient sur l'ancien texte).
-                        conn.execute(
-                            "DELETE FROM scores WHERE offer_id = "
-                            "(SELECT id FROM offers WHERE fingerprint = ?)",
-                            (fp,),
-                        )
-                    conn.commit()
+                offer_id = existing["id"]
+                if description_changed:
+                    conn.execute("DELETE FROM scores WHERE offer_id = ?",
+                                 (offer_id,))
+                    conn.execute("DELETE FROM matches WHERE offer_id = ?",
+                                 (offer_id,))
+                _update_offer(conn, fp, title, item, description, location)
+
+            # Paires (offre, profil) — au premier run, un nouveau profil
+            # rattache aussi les offres déjà en base.
+            for pid, term in matched.items():
+                conn.execute(
+                    "INSERT INTO matches (offer_id, profile_id, term, matched_at) "
+                    "VALUES (?,?,?,?) "
+                    "ON CONFLICT(offer_id, profile_id) DO UPDATE SET "
+                    "term=excluded.term, matched_at=excluded.matched_at",
+                    (offer_id, pid, term, now()),
+                )
+                profile_hits[pid] = profile_hits.get(pid, 0) + 1
+            conn.commit()
 
     if check:
         if problems:
@@ -394,6 +455,9 @@ def collect(config: dict, *, dry: bool = False, check: bool = False) -> int:
     print(f"Nouvelles offres retenues : {stats['kept']}")
     print(f"Écartées (mots-clés)      : {stats['keyword_out']}")
     print(f"Doublons ignorés          : {stats['duplicate']}")
+    if profile_hits:
+        print("Matchs retenus par profil : "
+              + ", ".join(f"{pid}={n}" for pid, n in sorted(profile_hits.items())))
     if stats["error"]:
         print(f"Sources en échec         : {stats['error']}")
         for p in problems:
@@ -417,7 +481,10 @@ def main() -> int:
 
     if args.check:
         print("Test de joignabilité des sources…")
-    return collect(load_config(args.profile), dry=args.dry, check=args.check)
+    # Config partagée seule : la collecte matche tous les profils actifs,
+    # elle n'est pas propre à un profil (pas de résolution automatique ici).
+    return collect(load_shared_config(), dry=args.dry, check=args.check,
+                   restrict=args.profile)
 
 
 if __name__ == "__main__":
