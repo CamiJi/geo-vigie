@@ -153,15 +153,14 @@ fetchers existants) : France Travail + HelloWork avec mots-clés hôtellerie
 
 ## Risques
 
-- **France Travail en mode shell (observé le 21/10 après-midi)** : pendant la
+- **France Travail en mode shell (observé le 21/10 après-midi, résolu)** : pendant la
   recette, les 2 sources FT basculent d'un HTML server-renderé (20-92 cards
   le matin) vers un shell SPA « secours » de 7 Ko pour toute requête sous
   `/offres/` — 0 card, quel que soit l'UA (honnête ou navigateur) ou les
-  entêtes, stable après 45 s d'attente. Déploiement FT ou dégradation
-  réseau, indécidable depuis un seul réseau. Le collecte tolère (0 item =
-  0 offre), `--check` alerte désormais (`VIDE … ⚠`, exit 1). À retester au
-  prochain run ; si persistant → traiter comme WTTJ : relever l'URL XHR
-  dans l'onglet Réseau.
+  entêtes. Dégradation transitoire (déploiement FT) : **retour au normal le
+  22/10** (3 + 1 offres au run du matin). Le collecte tolère (0 item =
+  0 offre) et `--check` alerte désormais sur une source à 0 élément
+  (`VIDE … ⚠`, exit 1) — utile pour ce type d'incident.
 
 - **Volume/bruit** : les sources généralistes remontent énormément d'offres
   hôtelières (souvent sous le plancher salarial) → calibrage `--dry` strict et
