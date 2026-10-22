@@ -3,7 +3,7 @@ import unittest
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
-from report import barometer, gather, recipients, render, send
+from report import barometer, gather, recipients, render, report, send
 
 
 def _make_conn() -> sqlite3.Connection:
@@ -13,7 +13,9 @@ def _make_conn() -> sqlite3.Connection:
     conn.execute("""
         CREATE TABLE offers (
             id INTEGER PRIMARY KEY, source TEXT, keyword_hit INTEGER,
-            posted_at TEXT, first_seen TEXT, location TEXT DEFAULT ''
+            posted_at TEXT, first_seen TEXT, location TEXT DEFAULT '',
+            title TEXT DEFAULT '', company TEXT DEFAULT '',
+            url TEXT DEFAULT ''
         )
     """)
     conn.execute("""
@@ -43,6 +45,15 @@ def _make_conn() -> sqlite3.Connection:
             profile_id TEXT NOT NULL,
             term TEXT DEFAULT '',
             UNIQUE (offer_id, profile_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            started TEXT NOT NULL,
+            finished TEXT,
+            detail TEXT
         )
     """)
     conn.executemany(
@@ -173,6 +184,39 @@ class RecipientsTests(unittest.TestCase):
         self.assertEqual(smtp.send_message.call_args.kwargs["to_addrs"], [
             "gabrielascavo@gmail.com", "aubertcam@gmail.com"
         ])
+
+
+class EmptyMailTests(unittest.TestCase):
+    """Pas de mail gratuit : un relevé vide n'est pas envoyé (sauf --force
+    ou report.send_empty: true), et le run est tracé « vide, non envoyé »."""
+
+    ENV = {"SMTP_HOST": "smtp.example.test", "SMTP_USER": "u",
+           "SMTP_PASS": "p", "MAIL_FROM": "sender@example.test",
+           "MAIL_TO": "to@example.test"}
+
+    def _run_report(self, conn):
+        with patch("report.db", return_value=conn), \
+                patch("report.load_env", return_value=self.ENV), \
+                patch("report.send") as smtp_send, \
+                patch("report.end_run") as end_run:
+            rc = report(CONFIG)
+        return rc, smtp_send, end_run
+
+    def test_empty_daily_report_is_not_sent(self):
+        conn = _make_conn()
+        conn.execute("UPDATE scores SET score = 10")  # tout sous le seuil 45
+        rc, smtp_send, end_run = self._run_report(conn)
+        self.assertEqual(rc, 0)
+        smtp_send.assert_not_called()
+        end_run.assert_called_once()
+        self.assertIn("vide, non envoyé", end_run.call_args.args[2])
+
+    def test_non_empty_daily_report_is_sent(self):
+        conn = _make_conn()  # offre 2 = 90, 4 = 100, 6 = 60 ≥ 45
+        rc, smtp_send, end_run = self._run_report(conn)
+        self.assertEqual(rc, 0)
+        smtp_send.assert_called_once()
+        self.assertIn("envoyé", end_run.call_args.args[2])
 
 
 def _baro_conn() -> sqlite3.Connection:
