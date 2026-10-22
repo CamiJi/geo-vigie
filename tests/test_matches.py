@@ -19,14 +19,15 @@ GEO = {"keywords": {
 class MultiProfileMatchTests(unittest.TestCase):
     def test_offer_matches_only_the_profiles_whose_keywords_hit(self):
         profiles = {"gabriela": HOTEL, "quentin": GEO}
-        hotel = _match_profiles(profiles, "Directrice adjointe d'hôtel",
-                                "Gestion opérationnelle d'un établissement",
-                                "Paris 14")
+        hotel, geo_out = _match_profiles(
+            profiles, "Directrice adjointe d'hôtel",
+            "Gestion opérationnelle d'un établissement", "Paris 14")
         self.assertEqual(set(hotel), {"gabriela"})
         self.assertTrue(hotel["gabriela"])
+        self.assertEqual(geo_out, 0)
 
-        geo = _match_profiles(profiles, "Géologue confirmé H/F",
-                              "Prospection et cartographie", "Lyon")
+        geo, _ = _match_profiles(profiles, "Géologue confirmé H/F",
+                                 "Prospection et cartographie", "Lyon")
         self.assertEqual(set(geo), {"quentin"})
 
     def test_offer_matching_no_profile_is_dropped(self):
@@ -34,20 +35,20 @@ class MultiProfileMatchTests(unittest.TestCase):
         self.assertEqual(
             _match_profiles(profiles, "Commercial B2B", "Prospection client",
                             "Paris"),
-            {},
+            ({}, 0),
         )
 
     def test_exclude_term_wins_even_with_include_hit(self):
         profiles = {"gabriela": HOTEL}
         self.assertEqual(
             _match_profiles(profiles, "Stage en hôtellerie", "", "Paris"),
-            {},
+            ({}, 0),
         )
 
     def test_one_offer_survives_even_if_only_one_profile_matches(self):
         """Une offre hors-quentin reste en base : c'est le but de Gabriela."""
         profiles = {"gabriela": HOTEL, "quentin": GEO}
-        matched = _match_profiles(
+        matched, _ = _match_profiles(
             profiles, "Revenue Manager H/F", "Optimisation tarifaire hôtelière",
             "Boulogne")
         self.assertEqual(list(matched), ["gabriela"])

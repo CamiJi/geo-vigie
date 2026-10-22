@@ -2,9 +2,11 @@
 # ─────────────────────────────────────────────────────────────────────
 # Profil hôtellerie / management (étape 5 du plan MULTIPROFIL.md).
 # Matière : profil LinkedIn brut du 2026-10-21 (perso/00-inbox, traité).
-# Décisions produit validées : geo Île-de-France + remote accepté (pas de
-# filtre dur — contrainte injectée au prompt), plancher salarial 2 200 €
-# net/mois, posture « sonder le marché » (→ baromètre à l'étape 6).
+# Décisions produit : geo Île-de-France en filtre DUR depuis le 21/10
+# (recadrage de Camille — élimination avant notation LLM), plancher
+# salarial 2 200 € net/mois (signal neutre en fin de justification),
+# niveau de poste au minimum équivalent à directrice adjointe d'hôtel,
+# posture « sonder le marché » (→ baromètre).
 # ─────────────────────────────────────────────────────────────────────
 
 id: gabriela
@@ -24,8 +26,12 @@ persona: >-
   hors cible mais représentative du secteur garde de la valeur
   d'information.
 
-# Géographie : injectée au prompt comme contrainte factuelle, jamais de
-# filtre dur à la collecte (voir décisions produit dans MULTIPROFIL.md).
+# Géographie : filtre DUR appliqué à la collecte, à la notation et au
+# rapport (common.geo_ok). Lieu vide ou ambigu → l'offre passe quand même
+# et le prompt tranche avec la consigne douce ci-dessous.
+geo_filter:
+  pattern: '(?i)\b(?:75|77|78|9[1-5])\b|paris|île-de-france|ile-de-france|\bIDF\b'
+
 location:
   base: "Fontenay-le-Fleury (78)"
   zones: ["Île-de-France"]
@@ -94,10 +100,35 @@ keywords:
     - apprentiss
     - alternant
 
+  exclude_title:
+    # Postes hiérarchiquement moindres que directeur/directrice adjointe
+    # d'hôtel : écartés sur le TITRE seulement (le terme peut apparaître
+    # légitimement dans la description d'une offre de direction).
+    - responsable de salle
+    - chef de rang
+    - maitre d hotel
+    - receptionniste
+    - commis
+    - gouvernante
+    - femme de chambre
+    - valet de chambre
+    - serveur
+    - serveuse
+    - cuisinier
+    - chef de partie
+    - pâtissier
+    - plongeur
+    - room attendant
+    - vendeur
+    - vendeuse
+    - boulanger
+    - bouch
+
 # ── Scoring ──────────────────────────────────────────────────────────
 scoring:
   model: "xiaomi/mimo-v2.6-flash"  # override du .env (LLM_MODEL) — testé le 21/10/2026
   min_salary_net_month: 2200   # plancher : génère la règle de score (score.py)
+  salary_signal: tail          # salaire absent = neutre, mention en fin (recadrage 21/10)
   min_score: 55                # seuil qualité : les adéquations faibles restent masquées
   top_n: 15                    # nombre max d'offres dans le mail
   temperature: 0
@@ -110,9 +141,20 @@ scoring:
       depuis la base)
     - 15 % secteur, type de poste et type de contrat
   rules: |
-    - Les offres hors Île-de-France ne sont pas écartées d'office : avec un
-      télétravail réel le score peut rester haut ; hors zone et sans
-      télétravail, pénalise fortement (pas de relocation).
+    - Périmètre géographique : Île-de-France uniquement. Les offres hors IDF
+      clairement identifiées sont éliminées avant notation ; si le lieu est
+      ambigu, une offre hors Île-de-France sans télétravail réel doit être
+      plafonnée à 30 (pas de relocation).
+    - Niveau de poste : Gabriela est directrice adjointe d'hôtel. Toute offre
+      hiérarchiquement moindre — responsable de salle, chef de rang, maître
+      d'hôtel, réceptionniste, commis, gouvernante, femme de chambre,
+      serveur, cuisinier, vendeur — est une dégradation de poste : plafonne
+      à 30 avec le verdict « hors-profil ». Un poste équivalent ou supérieur
+      (directeur/directrice, directeur/directrice adjoint(e), general ou
+      resident manager, rooms division manager, director of operations…)
+      est requis ; les postes de direction non opérationnels (commercial,
+      corporate, revenue) restent pertinents s'ils s'inscrivent dans une
+      trajectoire de direction hôtelière.
     - Ouverture au changement de secteur : valorise les qualités transversales
       (management, accueil, responsabilité, optimisation des process) ; un
       poste hors hôtellerie avec télétravail proche de la base peut rester

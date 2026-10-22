@@ -409,6 +409,13 @@ def keyword_match(config: dict, *parts: str) -> tuple[bool, str]:
         if _has_word(haystack, term):
             return False, ""
 
+    # Exclusions sur le TITRE seulement : un terme qui décrit un poste
+    # moindre (« responsable de salle ») peut légitimement apparaître dans
+    # la description d'une offre de direction (équipe encadrée, organisation).
+    for term in kw.get("exclude_title", []):
+        if _has_word(title, term):
+            return False, ""
+
     strong_terms = kw.get("include_strong", kw.get("include", []))
     for term in strong_terms:
         if _has_word(title, term):
@@ -427,6 +434,20 @@ def keyword_match(config: dict, *parts: str) -> tuple[bool, str]:
             return True, term
 
     return False, ""
+
+
+def geo_ok(location: str, config: dict) -> bool:
+    """Filtre géographique dur optionnel (`geo_filter.pattern` du profil).
+
+    - sans `geo_filter` → tout passe (comportement historique).
+    - lieu vide ou ambigu → tout passe : le scoring LLM tranche alors avec
+      la consigne géographique du prompt.
+    - sinon → le lieu doit matcher le motif (ex. codes postaux IDF).
+    """
+    pattern = (config.get("geo_filter") or {}).get("pattern")
+    if not pattern or not (location or "").strip():
+        return True
+    return re.search(pattern, location) is not None
 
 
 def _has_word(text: str, term: str) -> bool:

@@ -28,6 +28,7 @@ from common import (
     ROOT,
     db,
     end_run,
+    geo_ok,
     load_config,
     load_env,
     log_run,
@@ -107,21 +108,39 @@ def _floor_rule(config: dict) -> str:
     """Règle de plancher générée depuis `scoring.min_salary_net_month`.
 
     Sous le plancher → score plafonné à 30 (verdict hors-profil) ; salaire
-    non mentionné → aucun malus, mais signalé dans la justification.
+    non mentionné → aucun malus. `scoring.salary_signal` choisit la trace
+    laissée dans la justification :
+
+    - ``head`` (défaut — comportement historique de quentin, byte-identique) :
+      la justification commence par « Salaire non mentionné : ».
+    - ``tail`` (gabriela) : mention neutre en fin — le critère premier est
+      le niveau de qualification, l'absence de salaire n'est pas un signal.
     """
-    floor = (config.get("scoring") or {}).get("min_salary_net_month")
+    sc = config.get("scoring") or {}
+    floor = sc.get("min_salary_net_month")
     if not floor:
         return ""
     floor = int(floor)
     annual_net = floor * 12
     annual_gross = round(annual_net / 0.78 / 1000)  # ≈ 34 k€ brut/an
+    if sc.get("salary_signal", "head") == "tail":
+        no_salary = (
+            "Si l'offre ne mentionne aucun salaire, NE pénalise PAS le score : "
+            "le critère premier est le niveau de qualification et de "
+            "responsabilité du poste, l'absence de salaire n'est pas un "
+            "signal négatif. Dans ce cas, termine `reason` par la mention "
+            "neutre « (salaire non mentionné) »."
+        )
+    else:
+        no_salary = (
+            "Si l'offre ne mentionne aucun salaire, NE pénalise pas le score, "
+            "mais fais commencer `reason` par « Salaire non mentionné : »."
+        )
     return (
         f"- Plancher salarial : {floor} € net/mois (≈ {annual_net} € net/an, "
         f"ordre de grandeur ≈ {annual_gross} k€ brut/an). Si l'offre annonce "
         "un salaire clairement sous ce plancher, plafonne le score à 30 et "
-        "mets le verdict « hors-profil ». Si l'offre ne mentionne aucun "
-        "salaire, NE pénalise pas le score, mais fais commencer `reason` par "
-        "« Salaire non mentionné : »."
+        "mets le verdict « hors-profil ». " + no_salary
     )
 
 
@@ -273,6 +292,10 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
         sql += " LIMIT ?"
         params.append(int(limit))
     rows = conn.execute(sql, params).fetchall()
+
+    # Filtre géo dur du profil (`geo_filter`) : hors périmètre = zéro appel
+    # LLM. Un lieu vide ou ambigu garde la main au scoring (prompt).
+    rows = [r for r in rows if geo_ok(r["location"] or "", config)]
 
     if not rows:
         print("Aucune offre à noter.")

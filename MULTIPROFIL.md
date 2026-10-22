@@ -64,6 +64,8 @@ active: true
 cv_file: cv.txt
 persona: >-          # 1 phrase injectée dans le prompt de scoring
   Recruteur senior en hôtellerie-restauration et management d'établissements.
+geo_filter:                       # filtre DUR (recadrage 21/10)
+  pattern: '(?i)\b(?:75|77|78|9[1-5])\b|paris|île-de-france'
 location:
   base: "Fontenay-le-Fleury (78)"   # injectée au prompt, jamais le nom
   zones: ["Île-de-France"]
@@ -72,9 +74,11 @@ location:
 keywords:
   include_strong: [...]
   include_weak: [...]
-  exclude: [...]
+  exclude: [...]          # partout (titre, description, lieu)
+  exclude_title: [...]    # TITRE seulement (postes moindres, ex. responsable de salle)
 scoring:
   min_salary_net_month: 2200        # plancher
+  salary_signal: tail               # salaire absent = neutre, mention en fin
   min_score: 55
   top_n: 15
 report:
@@ -87,6 +91,34 @@ mailer:
 Sujet porté par `report.subject` (clé historique de l'étape 1, source
 unique) ; `mailer.to` / `mailer.cc` portent les destinataires, avec
 repli sur `MAIL_TO` / `MAIL_CC` du `.env` quand `mailer` est absent.
+
+`geo_filter.pattern` est appliqué à **trois niveaux** (`common.geo_ok`) :
+la collecte (aucune paire offre/profil hors zone, compteur `geo_out`),
+la notation (zéro appel LLM hors zone) et le rapport (hors zone absents
+du top, du baromètre et du compteur « en attente »). Lieu vide ou
+ambigu → l'offre passe, le prompt tranche.
+
+### Recadrage produit du 2026-10-21 (après le premier mail — Camille)
+
+1. **Filtre géo dur IDF** — avant le LLM : hors Île-de-France = éliminé
+   de facto (`geo_filter`, cf. ci-dessus). Bilan : **91 des 127 offres
+   matchées (72 %) hors périmètre** (Giessen, Beijing, Lausanne,
+   Megève…) écartées sans coût de notation.
+2. **Niveau de poste** — Gabriela est directrice adjointe d'hôtel : tout
+   poste hiérarchiquement moindre (responsable de salle, chef de rang,
+   commis…) = dégradation → plafond 30 / hors-profil. Postes équivalents
+   ou supérieurs requis (règle `Niveau de poste` + `exclude_title`).
+   Les directions non opérationnelles (commercial, corporate, revenue)
+   restent pertinentes si la trajectoire de direction hôtelier est plausible.
+3. **Salaire secondaire** — l'absence de salaire n'est **pas** un signal
+   (`salary_signal: tail` : mention neutre en fin de justification) ;
+   le critère premier est la qualification. Un salaire sous le plancher
+   reste éliminatoire (plafond 30).
+
+Re-scoring complet de Gabriela (36 offres nettes, 0 échec) et **étude
+renvoyée** le 2026-10-22 : 3 offres ≥ 55 (Revenue Manager TOO Hôtel,
+Directeur Room Service Fouquet's, Key Accounts Airbnb — tous Paris, tous
+arbitrés sur le niveau vs direction adjointe).
 
 ## Étapes
 

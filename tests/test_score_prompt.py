@@ -44,7 +44,10 @@ class GabrielaPromptTests(unittest.TestCase):
     def test_salary_floor_rule_generated_from_config(self):
         self.assertIn("Plancher salarial : 2200 € net/mois", self.prompt)
         self.assertIn("plafonne le score à 30", self.prompt)
-        self.assertIn("Salaire non mentionné", self.prompt)
+        # salary_signal: tail (recadrage 21/10) — l'absence de salaire n'est
+        # pas un signal : mention neutre en fin de justification.
+        self.assertIn("NE pénalise PAS le score", self.prompt)
+        self.assertIn("« (salaire non mentionné) »", self.prompt)
 
     def test_profile_own_weights_and_rules_replace_defaults(self):
         self.assertIn("- 40 % adéquation des compétences métier", self.prompt)

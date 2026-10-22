@@ -26,6 +26,7 @@ from common import (
     db,
     end_run,
     fingerprint,
+    geo_ok,
     keyword_match,
     load_shared_config,
     log_run,
@@ -398,14 +399,23 @@ FETCHERS = {
 # ── Matching par profil ──────────────────────────────────────────────
 
 def _match_profiles(profiles: dict, title: str, description: str,
-                    location: str) -> dict[str, str]:
-    """{profile_id: terme retenu} pour les profils dont les mots-clés matchent."""
+                    location: str) -> tuple[dict[str, str], int]:
+    """({profile_id: terme retenu}, nb de paires écartées par le filtre géo).
+
+    Le `geo_filter` du profil est un filtre DUR : une offre hors périmètre
+    ne coûte aucune notation LLM et ne peut figurer dans le rapport.
+    """
     matched: dict[str, str] = {}
+    geo_out = 0
     for pid, pconf in profiles.items():
         kept, term = keyword_match(pconf, title, description, location)
-        if kept:
-            matched[pid] = term
-    return matched
+        if not kept:
+            continue
+        if not geo_ok(location, pconf):
+            geo_out += 1
+            continue
+        matched[pid] = term
+    return matched, geo_out
 
 
 def _update_offer(conn, fp: str, title: str, item: dict, description: str,
@@ -424,8 +434,8 @@ def collect(config: dict, *, dry: bool = False, check: bool = False,
             restrict: str | None = None) -> int:
     conn = None if dry or check else db()
     run_id = log_run(conn, "collect") if conn else None
-    stats = {"kept": 0, "keyword_out": 0, "duplicate": 0, "error": 0,
-             "sources": 0}
+    stats = {"kept": 0, "keyword_out": 0, "geo_out": 0, "duplicate": 0,
+             "error": 0, "sources": 0}
     problems: list[str] = []
     run_fingerprints: set[str] = set()
     profile_hits: dict[str, int] = {}
@@ -479,7 +489,9 @@ def collect(config: dict, *, dry: bool = False, check: bool = False,
             location = item.get("location", "")
 
             if dry:
-                matched = _match_profiles(profiles, title, description, location)
+                matched, geo_out = _match_profiles(
+                    profiles, title, description, location)
+                stats["geo_out"] += geo_out
                 if not matched:
                     stats["keyword_out"] += 1
                     continue
@@ -510,7 +522,9 @@ def collect(config: dict, *, dry: bool = False, check: bool = False,
             # Matching PAR PROFIL : retenue si AU MOINS un profil actif la
             # matche — une offre utile à Gabriela entre même si elle est
             # hors-mots-clés de Quentin.
-            matched = _match_profiles(profiles, title, description, location)
+            matched, geo_out = _match_profiles(
+                profiles, title, description, location)
+            stats["geo_out"] += geo_out
 
             if not matched:
                 if description_changed:
@@ -581,6 +595,8 @@ def collect(config: dict, *, dry: bool = False, check: bool = False,
     if profile_hits:
         print("Matchs retenus par profil : "
               + ", ".join(f"{pid}={n}" for pid, n in sorted(profile_hits.items())))
+    if stats["geo_out"]:
+        print(f"Écartées (filtre géo du profil) : {stats['geo_out']}")
     if stats["error"]:
         print(f"Sources en échec         : {stats['error']}")
         for p in problems:

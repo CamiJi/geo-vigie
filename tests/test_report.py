@@ -13,7 +13,7 @@ def _make_conn() -> sqlite3.Connection:
     conn.execute("""
         CREATE TABLE offers (
             id INTEGER PRIMARY KEY, source TEXT, keyword_hit INTEGER,
-            posted_at TEXT, first_seen TEXT
+            posted_at TEXT, first_seen TEXT, location TEXT DEFAULT ''
         )
     """)
     conn.execute("""
@@ -46,7 +46,8 @@ def _make_conn() -> sqlite3.Connection:
         )
     """)
     conn.executemany(
-        "INSERT INTO offers VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO offers (id, source, keyword_hit, posted_at, first_seen) "
+        "VALUES (?, ?, ?, ?, ?)",
         [
             (1, "reed", 1, "2026-10-01", "2026-10-01"),
             (2, "egu", 1, "2026-10-05", "2026-10-05"),
@@ -102,6 +103,19 @@ class RecentReportTests(unittest.TestCase):
                      "VALUES (6, 'quentin', ?)",
                      (gather(CONFIG, conn)["today"],))
         self.assertIn(6, [row["id"] for row in gather(CONFIG, conn)["top"]])
+        conn.close()
+
+    def test_geo_filter_drops_out_of_zone_offers(self):
+        conn = _make_conn()
+        conn.execute("UPDATE offers SET location = 'Lyon 69' WHERE id = 2")
+        conn.execute("UPDATE offers SET location = '75 - PARIS' WHERE id = 6")
+        config = {**CONFIG, "geo_filter": {
+            "pattern": r"(?i)\b(?:75|77|78|9[1-5])\b|paris"}}
+        # L'offre 2 (score 90) est hors zone : écartée des deux modes.
+        result = gather(config, conn, latest=2)
+        self.assertEqual([row["id"] for row in result["top"]], [6])
+        daily = gather(config, conn)
+        self.assertEqual([row["id"] for row in daily["top"]], [4, 3, 6])
         conn.close()
 
     def test_smtp_sends_to_recipient_and_cc(self):
@@ -167,7 +181,8 @@ def _baro_conn() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     for ddl in (
         "CREATE TABLE offers (id INTEGER PRIMARY KEY, source TEXT,"
-        " keyword_hit INTEGER, posted_at TEXT, first_seen TEXT)",
+        " keyword_hit INTEGER, posted_at TEXT, first_seen TEXT,"
+        " location TEXT DEFAULT '')",
         "CREATE TABLE matches (id INTEGER PRIMARY KEY, offer_id INTEGER,"
         " profile_id TEXT, term TEXT DEFAULT '', UNIQUE (offer_id, profile_id))",
         "CREATE TABLE scores (id INTEGER PRIMARY KEY, offer_id INTEGER,"
@@ -215,12 +230,25 @@ class BarometerTests(unittest.TestCase):
         self.assertEqual(b["tracked"], 5)
         conn.close()
 
+    def test_geo_filter_keeps_out_of_zone_out_of_the_barometer(self):
+        conn = _baro_conn()
+        conn.execute("UPDATE offers SET location = '69 - LYON' WHERE id = 2")
+        config = {**CONFIG, "geo_filter": {
+            "pattern": r"(?i)\b(?:75|77|78|9[1-5])\b|paris"}}
+        b = barometer(conn, config)
+        # L'offre 2 (J-1) est hors zone : sortie des volumes et du suivi.
+        self.assertEqual(b["last7"], 2)
+        self.assertEqual(b["prev7"], 2)
+        self.assertEqual(b["tracked"], 4)
+        conn.close()
+
     def test_first_days_without_history_report_demarrage(self):
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
         for ddl in (
             "CREATE TABLE offers (id INTEGER PRIMARY KEY, source TEXT,"
-            " keyword_hit INTEGER, posted_at TEXT, first_seen TEXT)",
+            " keyword_hit INTEGER, posted_at TEXT, first_seen TEXT,"
+            " location TEXT DEFAULT '')",
             "CREATE TABLE matches (id INTEGER PRIMARY KEY, offer_id INTEGER,"
             " profile_id TEXT, term TEXT DEFAULT '', UNIQUE (offer_id, profile_id))",
             "CREATE TABLE scores (id INTEGER PRIMARY KEY, offer_id INTEGER,"

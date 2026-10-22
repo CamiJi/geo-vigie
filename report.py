@@ -18,7 +18,16 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from html import escape
 
-from common import db, end_run, load_config, load_env, log_run, now, profile_of
+from common import (
+    db,
+    end_run,
+    geo_ok,
+    load_config,
+    load_env,
+    log_run,
+    now,
+    profile_of,
+)
 
 
 def recipients(config: dict, env: dict) -> tuple[list[str], list[str]]:
@@ -47,17 +56,22 @@ def barometer(conn, config: dict) -> dict:
     d7 = (date.today() - timedelta(days=7)).isoformat()
     d14 = (date.today() - timedelta(days=14)).isoformat()
 
-    per_day = conn.execute(
-        "SELECT date(o.first_seen) AS d, COUNT(*) AS c "
-        "FROM offers o "
-        "JOIN matches m ON m.offer_id = o.id AND m.profile_id = ? "
-        "WHERE o.first_seen >= ? "
-        "GROUP BY d ORDER BY d",
-        (profile, d14),
-    ).fetchall()
-    last7 = sum(r["c"] for r in per_day if d7 <= r["d"] <= today)
-    prev7 = sum(r["c"] for r in per_day if r["d"] < d7)
-    recent_days = [(r["d"], r["c"]) for r in per_day if d7 <= r["d"] <= today]
+    # Hors périmètre geo = pas un relevé pertinent du sondage : le filtre
+    # dur empêche la notation, il doit aussi tenir les volumes du baromètre.
+    counts: dict[str, int] = {}
+    for r in conn.execute(
+            "SELECT date(o.first_seen) AS d, o.location "
+            "FROM offers o "
+            "JOIN matches m ON m.offer_id = o.id AND m.profile_id = ? "
+            "WHERE o.first_seen >= ?",
+            (profile, d14)).fetchall():
+        if not geo_ok(r["location"] or "", config):
+            continue
+        counts[r["d"]] = counts.get(r["d"], 0) + 1
+    per_day = sorted(counts.items())
+    last7 = sum(c for d, c in per_day if d7 <= d <= today)
+    prev7 = sum(c for d, c in per_day if d < d7)
+    recent_days = [(d, c) for d, c in per_day if d7 <= d <= today]
 
     if prev7 == 0:
         pct = None
@@ -79,10 +93,12 @@ def barometer(conn, config: dict) -> dict:
     week = _stats("WHERE profile_id = ? AND scored_at >= ?",
                   (profile, d7))
     total = _stats("WHERE profile_id = ?", (profile,))
-    tracked = conn.execute(
-        "SELECT COUNT(*) c FROM matches WHERE profile_id = ?",
-        (profile,),
-    ).fetchone()["c"]
+    tracked = sum(
+        1 for r in conn.execute(
+            "SELECT o.location FROM matches m "
+            "JOIN offers o ON o.id = m.offer_id WHERE m.profile_id = ?",
+            (profile,)).fetchall()
+        if geo_ok(r["location"] or "", config))
 
     return {
         "last7": last7, "prev7": prev7, "pct": pct, "trend": trend,
@@ -100,6 +116,21 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
 
     today = date.today().isoformat()
 
+    def _unscored() -> int:
+        """Offres du jour en attente — hors périmètre geo non comptées.
+
+        (Des offres hors zone restent « non notées » à vie : les annoncer
+        comme en attente serait trompeur.)
+        """
+        rows = conn.execute(
+            "SELECT o.location FROM offers o "
+            "JOIN matches m ON m.offer_id = o.id AND m.profile_id = ? "
+            "LEFT JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
+            "WHERE s.id IS NULL AND o.first_seen >= ?",
+            (profile, profile, today),
+        ).fetchall()
+        return sum(1 for r in rows if geo_ok(r["location"] or "", config))
+
     if latest is not None:
         active_sources = [
             source["name"] for source in config.get("sources", [])
@@ -109,7 +140,9 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
             top = []
         else:
             placeholders = ",".join("?" for _ in active_sources)
-            top = conn.execute(
+            # +100 de marge : le filtre géo s'applique après coup, ne pas
+            # gaspiller les places du top sur des offres hors périmètre.
+            top = [r for r in conn.execute(
                 "SELECT o.*, s.score, s.score_reason "
                 "FROM offers o "
                 "JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
@@ -117,38 +150,26 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
                 f"AND o.source IN ({placeholders}) "
                 "ORDER BY CASE WHEN o.posted_at != '' THEN o.posted_at "
                 "ELSE o.first_seen END DESC, s.score DESC, o.id DESC LIMIT ?",
-                (profile, min_score, *active_sources, latest),
-            ).fetchall()
+                (profile, min_score, *active_sources, latest + 100),
+            ).fetchall() if geo_ok(r["location"] or "", config)][:latest]
 
-        new_unscored = conn.execute(
-            "SELECT COUNT(*) c FROM offers o "
-            "JOIN matches m ON m.offer_id = o.id AND m.profile_id = ? "
-            "LEFT JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
-            "WHERE s.id IS NULL AND o.first_seen >= ?",
-            (profile, profile, today),
-        ).fetchone()["c"]
+        new_unscored = _unscored()
         return {"top": top, "min_score": min_score,
                 "new_unscored": new_unscored, "today": today,
                 "mode": "latest", "latest": latest, "profile": profile,
                 "baro": barometer(conn, config)}
 
-    top = conn.execute(
+    top = [r for r in conn.execute(
         "SELECT o.*, s.score, s.score_reason "
         "FROM offers o "
         "JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
         "LEFT JOIN reports r ON r.offer_id = o.id AND r.profile_id = ? "
         "WHERE s.score >= ? AND (r.sent_at IS NULL OR r.sent_at >= ?) "
         "ORDER BY s.score DESC, o.id DESC LIMIT ?",
-        (profile, profile, min_score, today, top_n),
-    ).fetchall()
+        (profile, profile, min_score, today, top_n + 100),
+    ).fetchall() if geo_ok(r["location"] or "", config)][:top_n]
 
-    new_unscored = conn.execute(
-        "SELECT COUNT(*) c FROM offers o "
-        "JOIN matches m ON m.offer_id = o.id AND m.profile_id = ? "
-        "LEFT JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
-        "WHERE s.id IS NULL AND o.first_seen >= ?",
-        (profile, profile, today),
-    ).fetchone()["c"]
+    new_unscored = _unscored()
 
     return {"top": top, "min_score": min_score, "new_unscored": new_unscored,
             "today": today, "mode": "daily", "profile": profile,
