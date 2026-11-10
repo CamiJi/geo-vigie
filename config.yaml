@@ -136,11 +136,13 @@ sources:
     url: https://www.michaelpage.fr/jobs
 
   # Journal des Palaces : RSS officiel de la section carrière (offres
-  # hôtellerie de luxe FR/international). ~2 365 entrées cumulées → on ne
-  # garde que les 50 plus récentes (max_items) sans exploiter le scoring.
+  # hôtellerie de luxe FR/international). Désactivé le 2026-11-10 : le nano
+  # reçoit un 403 sur le flux (filtrage Cloudflare de l'IP datacenter, quel
+  # que soit le User-Agent) alors qu'il répond depuis le poste de travail.
+  # Réactiver seulement si le flux redevient joignable depuis le serveur.
   - name: journaldespalaces-rss
     type: rss
-    enabled: true
+    enabled: false
     url: https://www.journaldespalaces.com/carriere/feed/rss.xml
     max_items: 50
     fields:
