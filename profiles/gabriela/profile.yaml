@@ -197,9 +197,11 @@ report:
   sections:
     - top          # offres notées >= min_score
     - discarded    # compact : celles filtrées par mots-clés
-  # Relevé vide : mail informatif quand même (baromètre + seuil), avec un
-  # objet dédié qui ne ressemble pas à un rapport à 0 offre.
-  send_empty: true
+  # Relevé vide : mail informatif (baromètre + seuil), avec un objet dédié
+  # qui ne ressemble pas à un rapport à 0 offre.
+  #   "cc"  = envoyé aux seules adresses en copie (Camille) — test/monitoring
+  #   true  = envoyé aussi au candidat ; false = silence
+  send_empty: "cc"
   subject_empty: "[vigie-gabriela] Aucune nouvelle offre — {date}"
 
 # Mailer dédié (consommé par report.py dès l'étape 6) : elle reçoit sur

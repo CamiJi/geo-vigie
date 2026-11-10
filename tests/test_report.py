@@ -230,6 +230,36 @@ class EmptyMailTests(unittest.TestCase):
         self.assertIn("Aucune nouvelle offre au-dessus du seuil", text)
         self.assertIn("Baromètre", text)
 
+    def _run_report_cfg(self, conn, config):
+        with patch("report.db", return_value=conn), \
+                patch("report.load_env", return_value=self.ENV), \
+                patch("report.send") as smtp_send, \
+                patch("report.end_run") as end_run:
+            rc = report(config)
+        return rc, smtp_send, end_run
+
+    def test_empty_report_goes_to_cc_only(self):
+        """`send_empty: "cc"` : mail informatif au propriétaire seulement."""
+        conn = _make_conn()
+        conn.execute("UPDATE scores SET score = 10")
+        config = {**CONFIG,
+                  "mailer": {"to": "cand@example.test",
+                             "cc": "camille@example.test"},
+                  "report": {"send_empty": "cc",
+                             "subject_empty": "[vigie-test] Aucune "
+                                              "nouvelle offre — {date}"}}
+        _, smtp_send, _ = self._run_report_cfg(conn, config)
+        smtp_send.assert_called_once()
+        self.assertTrue(smtp_send.call_args.kwargs["cc_only"])
+
+    def test_empty_report_without_cc_is_not_sent(self):
+        conn = _make_conn()
+        conn.execute("UPDATE scores SET score = 10")
+        config = {**CONFIG, "report": {"send_empty": "cc"}}
+        _, smtp_send, end_run = self._run_report_cfg(conn, config)
+        smtp_send.assert_not_called()
+        self.assertIn("pas de cc", end_run.call_args.args[2])
+
     def test_non_empty_daily_report_is_sent(self):
         conn = _make_conn()  # offre 2 = 90, 4 = 100, 6 = 60 ≥ 45
         rc, smtp_send, end_run = self._run_report(conn)

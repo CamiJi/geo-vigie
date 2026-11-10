@@ -334,8 +334,12 @@ def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
 
 
 def send(env: dict, subject: str, text: str, html: str,
-         config: dict | None = None) -> None:
+         config: dict | None = None, *, cc_only: bool = False) -> None:
     to_addresses, cc_addresses = recipients(config or {}, env)
+    if cc_only:
+        # Relevé vide : le mail informatif ne part qu'aux adresses en copie
+        # (le propriétaire du robot), jamais au candidat.
+        to_addresses, cc_addresses = cc_addresses, []
     if not to_addresses:
         raise SystemExit("Aucun destinataire : `mailer.to` (profile.yaml) "
                          "ou MAIL_TO (.env) manquant.")
@@ -383,11 +387,21 @@ def report(config: dict, *, preview: bool = False, force: bool = False,
         conn.close()
         return 0
 
-    if (not rows and not force and latest is None
-            and not config.get("report", {}).get("send_empty")):
+    send_empty = config.get("report", {}).get("send_empty")
+    if not rows and not force and latest is None and not send_empty:
         print("0 offre au-dessus du seuil — mail non envoyé "
               "(utiliser --force pour forcer).")
         end_run(conn, run_id, f"profile={meta['profile']} vide, non envoyé")
+        conn.close()
+        return 0
+
+    # `send_empty: "cc"` = relevé vide envoyé aux seules adresses en copie
+    # (test/monitoring) ; `true` = à tout le monde ; `false` = silence.
+    cc_only = (not rows) and str(send_empty).lower() in ("cc", "cc-only")
+    if cc_only and not recipients(config, env)[1]:
+        print("0 offre — mail informatif non envoyé : aucune adresse en "
+              "copie (mailer.cc / MAIL_CC).")
+        end_run(conn, run_id, f"profile={meta['profile']} vide, pas de cc")
         conn.close()
         return 0
 
@@ -398,7 +412,7 @@ def report(config: dict, *, preview: bool = False, force: bool = False,
     if missing:
         raise SystemExit(f"Configuration SMTP incomplète : {', '.join(missing)}")
 
-    send(env, subject, text, html, config)
+    send(env, subject, text, html, config, cc_only=cc_only)
 
     ids = [r["id"] for r in rows]
     if ids:
@@ -412,10 +426,15 @@ def report(config: dict, *, preview: bool = False, force: bool = False,
         )
         conn.commit()
 
-    end_run(conn, run_id, f"profile={meta['profile']} envoyé, "
-                          f"{len(rows)} offre(s)")
+    if cc_only:
+        detail = f"profile={meta['profile']} informatif vide, copie seule"
+        message = "Mail informatif envoyé — 0 offre (copie seule)"
+    else:
+        detail = f"profile={meta['profile']} envoyé, {len(rows)} offre(s)"
+        message = f"Mail envoyé — {len(rows)} offre(s)"
+    end_run(conn, run_id, detail)
     conn.close()
-    print(f"Mail envoyé — {len(rows)} offre(s)")
+    print(message)
     return 0
 
 
