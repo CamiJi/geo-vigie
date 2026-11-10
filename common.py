@@ -256,13 +256,48 @@ def migrate_schema(conn: sqlite3.Connection, default_profile: str | None = None,
 
 
 def _migration_profile() -> str:
-    """Profil destinataire des anciens scores pendant la migration."""
+    """Profil destinataire de l'historique mono-profil pendant la migration.
+
+    L'ancien schéma ne stockait pas de profil : tout appartient au
+    destinataire historique. Ordre de résolution :
+
+    1. `VIGIE_LEGACY_PROFILE` (explicite, prime sur tout) ;
+    2. le profil actif unique ;
+    3. le profil dont le destinataire correspond au `MAIL_TO` du .env.
+
+    Si rien ne tranche, on n'attribue PAS en silence : les données
+    partiraient sous un profil « default » invisible pour les profils
+    actifs, ce qui casse la déduplication (des offres déjà envoyées sont
+    renvoyées). On prévient et on documente la correction.
+    """
+    forced = (os.environ.get("VIGIE_LEGACY_PROFILE") or "").strip()
+    if forced:
+        return forced
     try:
         return default_profile_id() or "default"
     except SystemExit:
-        # Plusieurs profils actifs : impossible de trancher — les données
-        # historiques partent sous "default" plutôt que d'interrompre le run.
-        return "default"
+        pass
+
+    legacy = (load_env().get("MAIL_TO") or "").strip().lower()
+    matches = []
+    if legacy:
+        for pid in list_profiles():
+            mailer_to = ((_load_profile_raw(pid).get("mailer") or {})
+                         .get("to") or legacy)
+            addresses = [a.strip().lower() for a in str(mailer_to).split(",")
+                         if a.strip()]
+            if legacy in addresses:
+                matches.append(pid)
+    if len(matches) == 1:
+        return matches[0]
+
+    print("ATTENTION : plusieurs profils actifs, impossible d'attribuer "
+          "l'historique mono-profil automatiquement. Scores et rapports "
+          "vont sous le profil 'default' (invisible pour les profils "
+          "actifs → déduplication cassée). Relancer avec "
+          "VIGIE_LEGACY_PROFILE=<id>, ou déplacer les lignes 'default' "
+          "vers le bon profil.")
+    return "default"
 
 
 def db() -> sqlite3.Connection:

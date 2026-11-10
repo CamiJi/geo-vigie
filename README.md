@@ -228,3 +228,17 @@ sur systemd user + linger, déjà actif sur le nano pour Hermes. Le crontab exis
 `sideprojects/` est ignoré par le `.gitignore` racine du workspace : comme
 `hermes/`, **ce projet n'est couvert par aucun commit**. Un dépôt dédié et
 privé reste à créer si tu veux du versionné.
+
+### Migration mono-profil → multiprofil
+
+L'ancien schéma stockait le score et la date d'envoi dans `offers` ; la
+migration les déplace vers `scores` / `reports` en les attribuant **au
+destinataire historique**. Cet historique est retrouvé dans cet ordre :
+`VIGIE_LEGACY_PROFILE`, puis le profil actif unique, puis le profil dont le
+destinataire correspond au `MAIL_TO` du `.env`.
+
+Sans ce rattachement, les données partent sous un profil `default` invisible
+pour les profils actifs : la déduplication est cassée et des offres déjà
+envoyées sont renvoyées (incident du 2026-11-10, 7 doublons envoyés à
+Quentin). Le programme avertit désormais explicitement dans ce cas.
+

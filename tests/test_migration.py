@@ -1,7 +1,11 @@
+import os
 import sqlite3
 import unittest
+from unittest.mock import patch
 
-from common import LEGACY_OFFER_COLUMNS, SCHEMA, migrate_schema
+import common
+from common import (LEGACY_OFFER_COLUMNS, SCHEMA, _migration_profile,
+                    migrate_schema)
 
 LEGACY_SCHEMA = """
 CREATE TABLE offers (
@@ -74,6 +78,61 @@ class MigrationTests(unittest.TestCase):
         conn.executescript(SCHEMA)
         self.assertFalse(migrate_schema(conn, default_profile="quentin"))
         conn.close()
+
+
+class MigrationProfileTests(unittest.TestCase):
+    """Rattachement de l'historique mono-profil (incident du 2026-11-10).
+
+    Deux profils actifs : l'ancien code retombait sur `default`, rendant
+    les scores et rapports de Quentin invisibles → 7 offres déjà envoyées
+    lui ont été renvoyées. On retrouve désormais le profil par le
+    destinataire historique (MAIL_TO / mailer.to).
+    """
+
+    PROFILES = {
+        "gabriela": {"mailer": {"to": "gabrielascavo@gmail.com"}},
+        "quentin": {},          # repli sur MAIL_TO du .env
+    }
+
+    def _resolve(self, env=None, profiles=None, forced=None):
+        profiles = profiles or self.PROFILES
+        args = {"MAIL_TO": "quentin.charbonnier71@gmail.com"}
+        args.update(env or {})
+
+        def _raw(pid):
+            return profiles.get(pid, {})
+
+        with patch.object(common, "list_profiles", return_value=sorted(profiles)), \
+             patch.object(common, "_load_profile_raw", side_effect=_raw), \
+             patch.object(common, "load_env", return_value=args), \
+             patch.object(common, "default_profile_id",
+                          side_effect=SystemExit("deux profils actifs")), \
+             patch.dict(os.environ, ({"VIGIE_LEGACY_PROFILE": forced}
+                                     if forced else {}), clear=False):
+            if not forced:
+                os.environ.pop("VIGIE_LEGACY_PROFILE", None)
+            return _migration_profile()
+
+    def test_legacy_recipient_is_selected(self):
+        self.assertEqual(self._resolve(), "quentin")
+
+    def test_explicit_override_wins(self):
+        self.assertEqual(self._resolve(forced="gabriela"), "gabriela")
+
+    def test_two_profiles_on_global_mail_to_warns(self):
+        # Deux profils sans `mailer` retombent tous deux sur MAIL_TO :
+        # impossible de trancher → 'default' + avertissement explicite.
+        profiles = {"a": {}, "b": {}}
+        with patch("builtins.print") as fake_print:
+            self.assertEqual(self._resolve(profiles=profiles), "default")
+        self.assertIn("default", fake_print.call_args.args[0])
+
+    def test_ambiguous_match_falls_back(self):
+        profiles = {"a": {"mailer": {"to": "same@x.y"}},
+                    "b": {"mailer": {"to": "same@x.y"}}}
+        with patch("builtins.print"):
+            self.assertEqual(self._resolve(env={"MAIL_TO": "same@x.y"},
+                                           profiles=profiles), "default")
 
 
 if __name__ == "__main__":

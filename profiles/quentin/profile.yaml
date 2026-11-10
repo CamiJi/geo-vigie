@@ -97,7 +97,11 @@ keywords:
 
 # ── Scoring ──────────────────────────────────────────────────────────
 scoring:
-  model: "xiaomi/mimo-v2.6-flash"  # override du .env (LLM_MODEL) — testé le 21/10/2026
+  # Quentin reste sur le modèle historique du nano (gemini) : la bascule
+  # vers MiMo n'a pas été décidée pour lui, seulement benchée (21/10).
+  # Pour basculer : remplacer par "xiaomi/mimo-v2.6-flash" (11× moins cher
+  # à la tâche, cf. README/bench_cost.py).
+  model: "google/gemini-3.7-flash"  # aligné sur le .env du nano
   min_score: 55              # seuil qualité : les adéquations faibles restent masquées
   top_n: 15                  # nombre max d'offres dans le mail
   temperature: 0
