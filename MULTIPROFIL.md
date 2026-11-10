@@ -64,11 +64,13 @@ active: true
 cv_file: cv.txt
 persona: >-          # 1 phrase injectée dans le prompt de scoring
   Recruteur senior en hôtellerie-restauration et management d'établissements.
-geo_filter:                       # filtre DUR (recadrage 21/10)
-  pattern: '(?i)\b(?:75|77|78|9[1-5])\b|paris|île-de-france'
+geo_filter:                       # MALUS hors périmètre (souple, 10/11)
+  soft: true
+  pattern: '(?i)\b(?:75|77|78|9[1-5]|28|27|60)\b|paris|île-de-france'
+  penalty: 25                     # points retirés APRÈS notation
 location:
   base: "Fontenay-le-Fleury (78)"   # injectée au prompt, jamais le nom
-  zones: ["Île-de-France"]
+  zones: ["Île-de-France", "couronne ~40 km (28, 27, 60)"]
   remote: accepte
   relocation: non
 keywords:
@@ -92,11 +94,13 @@ Sujet porté par `report.subject` (clé historique de l'étape 1, source
 unique) ; `mailer.to` / `mailer.cc` portent les destinataires, avec
 repli sur `MAIL_TO` / `MAIL_CC` du `.env` quand `mailer` est absent.
 
-`geo_filter.pattern` est appliqué à **trois niveaux** (`common.geo_ok`) :
+`geo_filter` a deux modes. **Dur** (défaut) : `pattern` est appliqué à
 la collecte (aucune paire offre/profil hors zone, compteur `geo_out`),
-la notation (zéro appel LLM hors zone) et le rapport (hors zone absents
-du top, du baromètre et du compteur « en attente »). Lieu vide ou
-ambigu → l'offre passe, le prompt tranche.
+à la notation (zéro appel LLM hors zone) et au rapport. **Souple**
+(`soft: true`, mode de Gabriela depuis le 10/11) : tout est collecté et
+noté, puis `common.geo_penalty()` retire `penalty` points aux offres hors
+périmètre — elles restent donc visibles si elles sont excellentes. Lieu
+vide ou ambigu → ni filtre ni malus, le prompt tranche.
 
 ### Recadrage produit du 2026-10-21 (après le premier mail — Camille)
 
@@ -114,6 +118,35 @@ ambigu → l'offre passe, le prompt tranche.
    (`salary_signal: tail` : mention neutre en fin de justification) ;
    le critère premier est la qualification. Un salaire sous le plancher
    reste éliminatoire (plafond 30).
+
+### Recadrage produit du 2026-11-10 (retour d'expérience — Camille)
+
+Aucun mail utile en trois semaines malgré un pipeline sain. Diagnostic :
+le filtre dur du 21/10 s'appliquait **après** des sources nationales
+dont seule la page 1 était lue (`?l=78` et `lieux=` sont ignorés en HTML
+public). Bilan mesuré sur un relevé : **82 offres matchées éliminées par
+le seul filtre géo**, dont ~30 postes de direction hôtelière (Rennes,
+Nantes, Bayonne, Montpellier…), pour **3 postes de direction hôtelière en
+IDF** dans tout le catalogue ; sur 8 offres notées, 1 seule ≥ 55.
+
+Décisions :
+
+1. **Filtre dur → malus** (`geo_filter.soft: true`, `penalty: 25`) sur un
+   périmètre IDF + couronne ~40 km (28, 27, 60). La géographie sort de la
+   note du LLM (pondération 50 / 25 / 25 métier-niveau-secteur) : le malus
+   est mécanique, donc reproductible.
+2. **4 sources de direction** ajoutées (HelloWork : directeur
+   d'établissement, adjoint de direction hôtel, directeur de résidence
+   hôtelière, responsable hôtelier) — 5 à 7 cartes IDF sur 20 chacune,
+   mesuré depuis le serveur.
+3. **Bruit d'exécution** coupé sur le titre (barman, concierge, second de
+   cuisine, gouvernant, agent hôtelier, technicien), mots-clés EHPAD /
+   médico-social / résidence services ajoutés.
+
+Résultat : **15 offres ≥ 55** au premier mail (Paris, 77, 78, 93, 95,
+dont adjoints de direction, responsables hôteliers et directions
+d'établissement), contre 1 auparavant. Reste à faire : API France Travail
+OAuth (`commune` + `distance`) pour remplacer la page nationale page 1.
 
 Re-scoring complet de Gabriela (36 offres nettes, 0 échec) et **étude
 renvoyée** le 2026-10-22 : 3 offres ≥ 55 (Revenue Manager TOO Hôtel,
