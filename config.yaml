@@ -110,20 +110,35 @@ sources:
     enabled: true
     url: https://www.hellowork.com/fr-fr/emploi/mot-cle_geologie.html
 
-  # France Travail — recherche NATIONALE pour Quentin : il est mobile, donc
-  # aucune restriction géographique à la source et aucun malus (son profil
-  # n'a pas de `geo_filter`). Le scoring juge la localisation en contexte.
-  # L'API OAuth est suspendue (absente du catalogue francetravail.io) : on
-  # utilise la page publique, 20 résultats max, sans pagination.
+  # France Travail — pages MÉTIER canoniques (liste = sitemap
+  # `rechercheoffre/sitemap/secteurs-metiers.xml`). Quentin est mobile : rien
+  # n'est restreint géographiquement à la source et son profil n'a pas de
+  # `geo_filter`, donc aucun malus.
+  #
+  # ATTENTION robots.txt de candidat.francetravail.fr :
+  #   Disallow: *motsCles=*
+  # → toute URL de recherche `?motsCles=…` est interdite, y compris avec
+  # `lieux=`/`rayon=` (vérifié : ces paramètres ne filtrent que sur cette
+  # forme, pas sur les pages métier). On reste donc sur les slugs métier.
   - name: france-travail-geologue
     type: france_travail
     enabled: true
-    url: "https://candidat.francetravail.fr/offres/recherche?motsCles=geologue"
+    url: "https://candidat.francetravail.fr/offres/emploi/geologue/s19m4"
 
-  - name: france-travail-geotechnicien
+  - name: france-travail-hydrogeologue
     type: france_travail
     enabled: true
-    url: "https://candidat.francetravail.fr/offres/recherche?motsCles=geotechnicien"
+    url: "https://candidat.francetravail.fr/offres/emploi/hydrogeologue/s19m9"
+
+  - name: france-travail-geologue-minier
+    type: france_travail
+    enabled: true
+    url: "https://candidat.francetravail.fr/offres/emploi/geologue-minier/s19m22"
+
+  - name: france-travail-geophysicien
+    type: france_travail
+    enabled: true
+    url: "https://candidat.francetravail.fr/offres/emploi/geophysicien/s19m6"
 
   # ── Hôtellerie / management (profil gabriela, étape 4 — 2026-10-21) ──
   # Balayage + robots.txt vérifiés le 2026-10-21 (voir MULTIPROFIL.md).
@@ -175,30 +190,25 @@ sources:
     enabled: true
     url: https://www.hellowork.com/fr-fr/emploi/mot-cle_hotellerie-restauration.html
 
-  # France Travail géolocalisé pour Gabriela (2026-11-10). `lieux` attend un
-  # code INSEE (78242 = Fontenay-le-Fleury), pas un code postal, et `rayon`
-  # est en kilomètres : la page publique ne rend alors que le périmètre.
-  # Limite : 20 résultats par requête, `page=2` renvoie la même page → on
-  # multiplie les requêtes ciblées au lieu de paginer.
+  # France Travail — pages métier canoniques (robots.txt interdit les URL
+  # `?motsCles=…`, cf. commentaire côté quentin). Pas de filtre géo à la
+  # source : le malus `geo_filter` de Gabriela trie ensuite.
   - name: france-travail-directeur-hotel
     type: france_travail
     enabled: true
-    url: "https://candidat.francetravail.fr/offres/recherche?motsCles=directeur%20hotel&lieux=78242&rayon=40"
+    url: "https://candidat.francetravail.fr/offres/emploi/directeur-d-hotel/s24m11"
 
-  - name: france-travail-directeur-etablissement
+  # EHPAD / maisons de retraite : la cible médico-sociale n'avait aucune
+  # source dédiée jusqu'ici.
+  - name: france-travail-maison-retraite
     type: france_travail
     enabled: true
-    url: "https://candidat.francetravail.fr/offres/recherche?motsCles=directeur%20etablissement&lieux=78242&rayon=40"
+    url: "https://candidat.francetravail.fr/offres/emploi/directeur-de-maison-de-retraite/s41m17"
 
-  - name: france-travail-responsable-hebergement
+  - name: france-travail-directeur-restaurant
     type: france_travail
     enabled: true
-    url: "https://candidat.francetravail.fr/offres/recherche?motsCles=responsable%20hebergement&lieux=78242&rayon=40"
-
-  - name: france-travail-directeur-residence
-    type: france_travail
-    enabled: true
-    url: "https://candidat.francetravail.fr/offres/recherche?motsCles=directeur%20residence&lieux=78242&rayon=40"
+    url: "https://candidat.francetravail.fr/offres/emploi/directeur-de-restaurant/s24m10"
 
   # ── Direction d'établissement & hébergement (ajout 2026-11-10) ───────
   # Le catalogue manquait de postes de direction réellement en IDF : les
