@@ -159,14 +159,18 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
                 "mode": "latest", "latest": latest, "profile": profile,
                 "baro": barometer(conn, config)}
 
+    # Une offre déjà signalée au profil ne revient JAMAIS, même le jour
+    # même : la clause historique `OR r.sent_at >= today` renvoyait les
+    # offres du relevé précédent lors d'un second envoi dans la journée
+    # (doublons du 2026-11-10). Pour rejouer un relevé, `--force`.
     top = [r for r in conn.execute(
         "SELECT o.*, s.score, s.score_reason "
         "FROM offers o "
         "JOIN scores s ON s.offer_id = o.id AND s.profile_id = ? "
         "LEFT JOIN reports r ON r.offer_id = o.id AND r.profile_id = ? "
-        "WHERE s.score >= ? AND (r.sent_at IS NULL OR r.sent_at >= ?) "
+        "WHERE s.score >= ? AND r.sent_at IS NULL "
         "ORDER BY s.score DESC, o.id DESC LIMIT ?",
-        (profile, profile, min_score, today, top_n + 100),
+        (profile, profile, min_score, top_n + 100),
     ).fetchall() if geo_ok(r["location"] or "", config)][:top_n]
 
     new_unscored = _unscored()
@@ -241,11 +245,17 @@ def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
         subject = f"[geo-vigie] Extrait — {len(rows)} offres récentes ({meta['today']})"
 
     if not rows:
+        # Relevé vide : objet dédié optionnel (`report.subject_empty`), pour
+        # que le mail informatif ne ressemble pas à un rapport à 0 offre.
+        empty_cfg = config.get("report", {}).get("subject_empty")
+        if empty_cfg and meta.get("mode") != "latest":
+            subject = empty_cfg.format(count=0, date=meta["today"])
         if meta.get("mode") == "latest":
             body = ("Aucune offre récente ne dépasse le seuil d'adéquation "
                     f"de {meta['min_score']}/100.")
         else:
-            body = ("Aucune nouvelle offre au-dessus du seuil aujourd'hui.\n"
+            body = ("Aucune nouvelle offre au-dessus du seuil "
+                    f"({meta['min_score']}/100) sur ce relevé.\n"
                     f"Offres en attente de notation : {meta['new_unscored']}.")
         if fmt == "html":
             body = f"<p>{escape(body).replace(chr(10), '<br>')}</p>"

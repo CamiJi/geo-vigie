@@ -97,8 +97,8 @@ class RecentReportTests(unittest.TestCase):
     def test_daily_mode_is_profile_scoped_and_skips_already_sent(self):
         conn = _make_conn()
         # Offres au-dessus du seuil (45) pour quentin : 2 (90), 3 (100),
-        # 4 (100), 6 (60). Comportement historique conservé : un envoi du JOUR
-        # reste inclus dans le relevé ; seul un envois antérieur exclut.
+        # 4 (100), 6 (60). Un envoi, même du jour, exclut l'offre : la
+        # clause `OR sent_at >= today` a produit des doublons le 2026-11-10.
         conn.execute("INSERT INTO reports (offer_id, profile_id, sent_at) "
                      "VALUES (2, 'quentin', '2026-10-01T00:00:00+00:00')")
         result = gather(CONFIG, conn)
@@ -109,11 +109,11 @@ class RecentReportTests(unittest.TestCase):
                      "VALUES (6, 'gabriela', '2026-10-01T00:00:00+00:00')")
         result = gather(CONFIG, conn)
         self.assertEqual([row["id"] for row in result["top"]], [4, 3, 6])
-        # Envoi aujourd'hui pour quentin : l'offre reste dans le relevé du jour.
+        # Envoi aujourd'hui pour quentin : l'offre SORT du relevé.
         conn.execute("INSERT INTO reports (offer_id, profile_id, sent_at) "
                      "VALUES (6, 'quentin', ?)",
                      (gather(CONFIG, conn)["today"],))
-        self.assertIn(6, [row["id"] for row in gather(CONFIG, conn)["top"]])
+        self.assertNotIn(6, [row["id"] for row in gather(CONFIG, conn)["top"]])
         conn.close()
 
     def test_geo_filter_drops_out_of_zone_offers(self):
@@ -210,6 +210,25 @@ class EmptyMailTests(unittest.TestCase):
         smtp_send.assert_not_called()
         end_run.assert_called_once()
         self.assertIn("vide, non envoyé", end_run.call_args.args[2])
+
+    def test_empty_report_is_sent_when_send_empty_is_on(self):
+        """Mail informatif demandé le 2026-11-10 : objet dédié + baromètre."""
+        conn = _make_conn()
+        conn.execute("UPDATE scores SET score = 10")   # tout sous le seuil
+        config = {**CONFIG, "report": {
+            "send_empty": True,
+            "subject_empty": "[vigie-test] Aucune nouvelle offre — {date}"}}
+        with patch("report.db", return_value=conn), \
+                patch("report.load_env", return_value=self.ENV), \
+                patch("report.send") as smtp_send, \
+                patch("report.end_run") as end_run:
+            report(config)
+        smtp_send.assert_called_once()
+        subject, text = smtp_send.call_args.args[1], smtp_send.call_args.args[2]
+        self.assertEqual(subject, "[vigie-test] Aucune nouvelle offre — "
+                                  f"{date.today().isoformat()}")
+        self.assertIn("Aucune nouvelle offre au-dessus du seuil", text)
+        self.assertIn("Baromètre", text)
 
     def test_non_empty_daily_report_is_sent(self):
         conn = _make_conn()  # offre 2 = 90, 4 = 100, 6 = 60 ≥ 45
