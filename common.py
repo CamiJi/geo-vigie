@@ -437,17 +437,35 @@ def keyword_match(config: dict, *parts: str) -> tuple[bool, str]:
 
 
 def geo_ok(location: str, config: dict) -> bool:
-    """Filtre géographique dur optionnel (`geo_filter.pattern` du profil).
+    """Filtre géographique optionnel (`geo_filter` du profil).
 
     - sans `geo_filter` → tout passe (comportement historique).
+    - `geo_filter.soft: true` → tout passe ici : le hors-périmètre n'est plus
+      éliminé mais reçoit le malus de `geo_penalty()` après notation.
     - lieu vide ou ambigu → tout passe : le scoring LLM tranche alors avec
       la consigne géographique du prompt.
     - sinon → le lieu doit matcher le motif (ex. codes postaux IDF).
     """
-    pattern = (config.get("geo_filter") or {}).get("pattern")
-    if not pattern or not (location or "").strip():
+    gf = config.get("geo_filter") or {}
+    pattern = gf.get("pattern")
+    if not pattern or gf.get("soft") or not (location or "").strip():
         return True
     return re.search(pattern, location) is not None
+
+
+def geo_penalty(location: str, config: dict) -> int:
+    """Malus appliqué après notation d'une offre hors périmètre (`soft`).
+
+    Ne s'applique qu'à un `geo_filter` souple : un filtre dur a déjà écarté
+    l'offre en amont. Lieu vide ou ambigu → 0 (le prompt tranche).
+    """
+    gf = config.get("geo_filter") or {}
+    pattern = gf.get("pattern")
+    if not gf.get("soft") or not pattern or not (location or "").strip():
+        return 0
+    if re.search(pattern, location):
+        return 0
+    return int(gf.get("penalty", 0))
 
 
 def _has_word(text: str, term: str) -> bool:

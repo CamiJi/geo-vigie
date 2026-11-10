@@ -26,15 +26,22 @@ persona: >-
   hors cible mais représentative du secteur garde de la valeur
   d'information.
 
-# Géographie : filtre DUR appliqué à la collecte, à la notation et au
-# rapport (common.geo_ok). Lieu vide ou ambigu → l'offre passe quand même
-# et le prompt tranche avec la consigne douce ci-dessous.
+# Géographie : MALUS, plus filtre dur (recadrage 2026-11-10).
+# Le filtre dur éliminait avant notation ~82 offres pertinentes par relevé,
+# dont la quasi-totalité des postes de direction hôtelière (sources
+# nationales page 1) : le mail restait vide. Désormais tout est noté, et
+# une offre hors périmètre perd `penalty` points — elle reste donc visible
+# si elle est excellente. Lieu vide ou ambigu → aucun malus, le prompt
+# tranche avec la consigne douce ci-dessous.
 geo_filter:
-  pattern: '(?i)\b(?:75|77|78|9[1-5])\b|paris|île-de-france|ile-de-france|\bIDF\b'
+  soft: true
+  # Périmètre : IDF + couronne ~40 km (Eure-et-Loir, Eure, Oise).
+  pattern: '(?i)\b(?:75|77|78|9[1-5]|28|27|60)\b|paris|île-de-france|ile-de-france|\bIDF\b'
+  penalty: 25
 
 location:
   base: "Fontenay-le-Fleury (78)"
-  zones: ["Île-de-France"]
+  zones: ["Île-de-France", "couronne ~40 km (28, 27, 60)"]
   remote: "accepté"
   relocation: "non"
 
@@ -83,6 +90,13 @@ keywords:
     - seminaire
     - événement
     - evenement
+    # Hébergement médico-social (cible explicite : EHPAD, résidences)
+    - ehpad
+    - médico-social
+    - medico-social
+    - maison de retraite
+    - résidence services
+    - residence services
 
   include_weak:
     # Titre seulement — management (niveau et cible de la candidate)
@@ -109,16 +123,26 @@ keywords:
     - maitre d hotel
     - receptionniste
     - commis
-    - gouvernante
+    - gouvernant
+    - assistante gouvernante
     - femme de chambre
     - valet de chambre
+    - barman
+    - barista
+    - concierge
+    - bagagiste
     - serveur
     - serveuse
     - cuisinier
     - chef de partie
-    - pâtissier
+    - second de cuisine
+    - sous-chef de cuisine
+    - patissier
     - plongeur
     - room attendant
+    - agent de maintenance
+    - agent hotelier
+    - technicien
     - vendeur
     - vendeuse
     - boulanger
@@ -133,18 +157,18 @@ scoring:
   top_n: 15                    # nombre max d'offres dans le mail
   temperature: 0
   weights: |
-    - 40 % adéquation des compétences métier (management d'équipes, opérations,
+    - 50 % adéquation des compétences métier (management d'équipes, opérations,
       accueil, process, revenue management) avec le CV
-    - 20 % niveau de responsabilité (direction adjointe / responsabilité
+    - 25 % niveau de responsabilité (direction adjointe / responsabilité
       d'établissement) par rapport au poste
-    - 25 % situation géographique (Île-de-France, ou télétravail réalisable
-      depuis la base)
-    - 15 % secteur, type de poste et type de contrat
+    - 25 % secteur, type de poste et type de contrat
+    (La géographie n'entre PAS dans la note : le moteur applique lui-même
+    un malus hors périmètre après l'évaluation.)
   rules: |
-    - Périmètre géographique : Île-de-France uniquement. Les offres hors IDF
-      clairement identifiées sont éliminées avant notation ; si le lieu est
-      ambigu, une offre hors Île-de-France sans télétravail réel doit être
-      plafonnée à 30 (pas de relocation).
+    - Géographie : ne pénalise pas la distance et ne plafonne pas une offre
+      à cause de son lieu. Le moteur retire automatiquement un malus aux
+      offres hors périmètre (IDF + couronne ~40 km). Signale simplement la
+      distance dans la justification quand elle est évidente.
     - Niveau de poste : Gabriela est directrice adjointe d'hôtel. Les postes
       opérationnels d'exécution — cuisine, salle (responsable de salle, chef
       de rang, maître d'hôtel), réception, housekeeping, commis, gouvernante,

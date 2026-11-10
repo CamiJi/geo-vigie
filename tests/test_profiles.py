@@ -51,7 +51,9 @@ class ProfileConfigTests(unittest.TestCase):
         config = load_config("gabriela")
         self.assertEqual(config["profile_id"], "gabriela")
         self.assertEqual(config["scoring"]["min_salary_net_month"], 2200)
-        self.assertEqual(config["location"]["zones"], ["Île-de-France"])
+        # Recadrage 2026-11-10 : périmètre élargi à la couronne ~40 km.
+        self.assertEqual(config["location"]["zones"][0], "Île-de-France")
+        self.assertIn("couronne", config["location"]["zones"][1])
         self.assertTrue(config["persona"].strip())
         self.assertEqual(config["mailer"]["to"], "gabrielascavo@gmail.com")
         cv = Path(config["cv_file"])

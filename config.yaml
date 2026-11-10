@@ -168,6 +168,31 @@ sources:
     enabled: true
     url: "https://candidat.francetravail.fr/offres/recherche?motsCles=directeur%20hotel"
 
+  # ── Direction d'établissement & hébergement (ajout 2026-11-10) ───────
+  # Le catalogue manquait de postes de direction réellement en IDF : les
+  # sources précédentes ratissent national et la page 1 est dominée par la
+  # province. Ces pages métier HelloWork ramènent 5 à 7 cartes IDF sur 20
+  # (mesuré le 2026-11-10), dont des directions d'établissement EHPAD.
+  - name: hellowork-directeur-etablissement
+    type: hellowork
+    enabled: true
+    url: https://www.hellowork.com/fr-fr/emploi/metier_directeur-d-etablissement.html
+
+  - name: hellowork-adjoint-direction-hotel
+    type: hellowork
+    enabled: true
+    url: https://www.hellowork.com/fr-fr/emploi/metier_adjoint-direction-hotel.html
+
+  - name: hellowork-directeur-residence-hoteliere
+    type: hellowork
+    enabled: true
+    url: https://www.hellowork.com/fr-fr/emploi/metier_directeur-residence-hoteliere.html
+
+  - name: hellowork-responsable-hotelier
+    type: hellowork
+    enabled: true
+    url: https://www.hellowork.com/fr-fr/emploi/metier_responsable-hotelier.html
+
   # EURAXESS est en pause : le formulaire de recherche est en POST et le
   # paramètre keyword de l'URL testée ne filtrait pas les cartes observées.
   # Ne pas l'activer avant d'avoir résolu et testé le vrai contrat de recherche.

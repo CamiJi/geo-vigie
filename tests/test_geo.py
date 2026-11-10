@@ -8,7 +8,7 @@ directrice adjointe d'hôtel ; salaire absent = neutre (mention en fin).
 import unittest
 
 from collect import _match_profiles
-from common import geo_ok, keyword_match
+from common import geo_ok, geo_penalty, keyword_match
 from score import _floor_rule
 
 GEO = {"geo_filter": {
@@ -88,6 +88,44 @@ class MatchProfilesGeoTests(unittest.TestCase):
             self.PROFILES, "Géologue - Hôtel", "terrain", "Lyon")
         self.assertEqual(matched, {"quentin": "géolog"})
         self.assertEqual(geo_out, 1)
+
+
+SOFT = {"geo_filter": {
+    "soft": True,
+    "pattern": r"(?i)\b(?:75|77|78|9[1-5]|28|27|60)\b|paris|île-de-france",
+    "penalty": 25}}
+
+
+class SoftGeoPenaltyTests(unittest.TestCase):
+    """Recadrage 2026-11-10 : hors périmètre = malus, plus d'élimination."""
+
+    def test_soft_filter_never_eliminates(self):
+        for loc in ("69 - LYON", "64 - BAYONNE", "34 - MONTPELLIER", ""):
+            self.assertTrue(geo_ok(loc, SOFT), loc)
+
+    def test_no_penalty_inside_perimeter(self):
+        for loc in ("75 - PARIS", "78 - VERSAILLES", "28 - DREUX",
+                    "27 - ÉVREUX", "60 - BEAUVAIS", "Île-de-France"):
+            self.assertEqual(geo_penalty(loc, SOFT), 0, loc)
+
+    def test_penalty_outside_perimeter(self):
+        for loc in ("69 - LYON", "64 - BAYONNE", "34 - MONTPELLIER"):
+            self.assertEqual(geo_penalty(loc, SOFT), 25, loc)
+
+    def test_empty_location_gets_no_penalty(self):
+        self.assertEqual(geo_penalty("", SOFT), 0)
+
+    def test_hard_filter_never_applies_penalty(self):
+        self.assertEqual(geo_penalty("69 - LYON", GEO), 0)
+        self.assertFalse(geo_ok("69 - LYON", GEO))
+
+    def test_gabriela_profile_is_soft(self):
+        from common import load_config
+        conf = load_config("gabriela")
+        self.assertTrue(conf["geo_filter"]["soft"])
+        self.assertTrue(geo_ok("64 - BAYONNE", conf))
+        self.assertEqual(geo_penalty("64 - BAYONNE", conf), 25)
+        self.assertEqual(geo_penalty("78 - VERSAILLES", conf), 0)
 
 
 class FloorRuleTests(unittest.TestCase):

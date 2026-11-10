@@ -37,7 +37,7 @@ class GabrielaPromptTests(unittest.TestCase):
         self.assertIn("hôtellerie-restauration", self.prompt)
         self.assertIn("sondage du marché", self.prompt)
         self.assertIn("Localisation : base Fontenay-le-Fleury (78)", self.prompt)
-        self.assertIn("zones visées : Île-de-France", self.prompt)
+        self.assertIn("zones visées : Île-de-France, couronne", self.prompt)
         self.assertIn("Télétravail : accepté", self.prompt)
         self.assertIn("Relocation : non", self.prompt)
 
@@ -50,7 +50,9 @@ class GabrielaPromptTests(unittest.TestCase):
         self.assertIn("« (salaire non mentionné) »", self.prompt)
 
     def test_profile_own_weights_and_rules_replace_defaults(self):
-        self.assertIn("- 40 % adéquation des compétences métier", self.prompt)
+        self.assertIn("- 50 % adéquation des compétences métier", self.prompt)
+        # La géo n'est plus une composante de la note : malus moteur.
+        self.assertIn("La géographie n'entre PAS dans la note", self.prompt)
         self.assertIn("Ouverture au changement de secteur", self.prompt)
         self.assertNotIn("géosciences", self.prompt)
         self.assertNotIn("- 45 %", self.prompt)

@@ -29,6 +29,7 @@ from common import (
     db,
     end_run,
     geo_ok,
+    geo_penalty,
     load_config,
     load_env,
     log_run,
@@ -322,6 +323,15 @@ def score(config: dict, *, limit: int | None = None, rescore: bool = False) -> i
             print(f"  KO  {row['title'][:60]!r} → {exc}")
             continue
 
+        # Malus géographique du profil souple : appliqué APRÈS le LLM, qui
+        # n'a plus la géographie dans sa note. Le préfixe garde intacte la
+        # convention « (salaire non mentionné) » en fin de justification.
+        penalty = geo_penalty(row["location"] or "", config)
+        if penalty:
+            raw = data["score"]
+            data["score"] = max(0, raw - penalty)
+            data["reason"] = (f"Hors périmètre (malus −{penalty}). "
+                              f"{data['reason']}").strip()
         conn.execute(
             "INSERT INTO scores (offer_id, profile_id, score, score_reason, "
             "score_model, scored_at) VALUES (?,?,?,?,?,?) "
