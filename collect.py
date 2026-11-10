@@ -430,6 +430,23 @@ def _update_offer(conn, fp: str, title: str, item: dict, description: str,
 
 # ── Collecte ─────────────────────────────────────────────────────────
 
+def _record_source(conn, run_id, source: str, ok: bool, items: int = 0,
+                   error: str = "") -> None:
+    """Trace la santé d'une source pour un relevé (table `source_health`).
+
+    `run_id` regroupe toutes les sources d'un même relevé : sans lui, un
+    horodatage par source empêche de dire « ce relevé-ci ».
+    """
+    if conn is None:
+        return
+    conn.execute(
+        "INSERT INTO source_health (run_id, source, ok, items, error, "
+        "checked_at) VALUES (?,?,?,?,?,?)",
+        (run_id, source, 1 if ok else 0, items, error[:200], now()),
+    )
+    conn.commit()
+
+
 def collect(config: dict, *, dry: bool = False, check: bool = False,
             restrict: str | None = None) -> int:
     conn = None if dry or check else db()
@@ -465,9 +482,14 @@ def collect(config: dict, *, dry: bool = False, check: bool = False,
         except Exception as exc:  # noqa: BLE001 — une source morte ne casse pas le run
             stats["error"] += 1
             problems.append(f"{name}: {type(exc).__name__} {exc}")
+            if not check:
+                _record_source(conn, run_id, name, False, 0,
+                               f"{type(exc).__name__}: {exc}")
             continue
 
         stats["sources"] += 1
+        if not check:
+            _record_source(conn, run_id, name, True, len(items))
 
         if check:
             # 0 élément = quasi toujours un incident (rendu passé en JS,

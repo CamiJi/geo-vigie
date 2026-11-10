@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import smtplib
+import sqlite3
 import ssl
 import sys
 from datetime import date, timedelta
@@ -107,6 +108,41 @@ def barometer(conn, config: dict) -> dict:
     }
 
 
+def source_health(conn) -> dict:
+    """État des sources au dernier relevé + échecs consécutifs.
+
+    Une source peut mourir sans bruit (403 Cloudflare, 500 côté site) : le
+    rapport affiche les échecs du dernier relevé et depuis combien de
+    relevés ils durent. `{}` si la table est absente ou vide.
+    """
+    try:
+        latest = conn.execute(
+            "SELECT MAX(run_id) FROM source_health").fetchone()[0]
+    except sqlite3.OperationalError:      # base d'avant la table
+        return {}
+    if not latest:
+        return {}
+    rows = conn.execute(
+        "SELECT source, ok, error FROM source_health WHERE run_id = ?",
+        (latest,)).fetchall()
+    ok = sum(1 for r in rows if r["ok"])
+    failed = []
+    for row in rows:
+        if row["ok"]:
+            continue
+        streak = 0
+        for prev in conn.execute(
+                "SELECT ok FROM source_health WHERE source = ? "
+                "ORDER BY id DESC LIMIT 20", (row["source"],)):
+            if prev["ok"]:
+                break
+            streak += 1
+        failed.append({"source": row["source"],
+                       "error": (row["error"] or "").strip(),
+                       "streak": streak})
+    return {"ok": ok, "total": len(rows), "failed": failed}
+
+
 def gather(config: dict, conn, *, latest: int | None = None) -> dict:
     """Collect today's qualifying offers or the latest scored matches."""
     sc = config.get("scoring", {})
@@ -157,7 +193,8 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
         return {"top": top, "min_score": min_score,
                 "new_unscored": new_unscored, "today": today,
                 "mode": "latest", "latest": latest, "profile": profile,
-                "baro": barometer(conn, config)}
+                "baro": barometer(conn, config),
+                "health": source_health(conn)}
 
     # Une offre déjà signalée au profil ne revient JAMAIS, même le jour
     # même : la clause historique `OR r.sent_at >= today` renvoyait les
@@ -177,7 +214,7 @@ def gather(config: dict, conn, *, latest: int | None = None) -> dict:
 
     return {"top": top, "min_score": min_score, "new_unscored": new_unscored,
             "today": today, "mode": "daily", "profile": profile,
-            "baro": barometer(conn, config)}
+            "baro": barometer(conn, config), "health": source_health(conn)}
 
 
 def _baro_facts(meta: dict) -> dict | None:
@@ -237,6 +274,44 @@ def _baro_html(meta: dict) -> str:
       </div>"""
 
 
+def _health_summary(meta: dict) -> dict | None:
+    """Données prêtes à afficher pour la santé des sources (None si vide)."""
+    h = meta.get("health") or {}
+    if not h or not h.get("total"):
+        return None
+    details = []
+    for f in h["failed"][:4]:
+        err = f["error"].split(":", 1)[-1].strip() if f["error"] else "échec"
+        streak = (f" — {f['streak']} relevés" if f["streak"] > 1 else "")
+        details.append(f"{f['source']} ({err[:48]}{streak})")
+    more = (f" · +{len(h['failed']) - 4} autre(s)"
+            if len(h["failed"]) > 4 else "")
+    return {"ok": h["ok"], "total": h["total"],
+            "failed": " · ".join(details) + more}
+
+
+def _health_text(meta: dict) -> list[str]:
+    h = _health_summary(meta)
+    if not h:
+        return []
+    line = f"Sources : {h['ok']}/{h['total']} OK"
+    if h["failed"]:
+        line += f" — en échec : {h['failed']}"
+    return [line]
+
+
+def _health_html(meta: dict) -> str:
+    h = _health_summary(meta)
+    if not h:
+        return ""
+    line = f"Sources : {h['ok']}/{h['total']} OK"
+    if h["failed"]:
+        line += f" — en échec : {h['failed']}"
+    color = "#b91c1c" if h["failed"] else "#6b7280"
+    return (f'<div style="margin-top:8px;font-size:13px;color:{color}">'
+            f'{escape(line)}</div>')
+
+
 def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
     subject_cfg = config.get("report", {}).get(
         "subject", "[geo-vigie] {count} offre(s) — {date}")
@@ -259,8 +334,8 @@ def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
                     f"Offres en attente de notation : {meta['new_unscored']}.")
         if fmt == "html":
             body = f"<p>{escape(body).replace(chr(10), '<br>')}</p>"
-            return subject, body + _baro_html(meta)
-        baro = _baro_text(meta)
+            return subject, body + _baro_html(meta) + _health_html(meta)
+        baro = _baro_text(meta) + _health_text(meta)
         if baro:
             body = f"{body}\n\n" + "\n".join(baro)
         return subject, body
@@ -274,7 +349,7 @@ def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
                 "Score = adéquation au CV, pas probabilité d'embauche."
             )
             lines.append("")
-        lines += _baro_text(meta)
+        lines += _baro_text(meta) + _health_text(meta)
         for r in rows:
             lines += [
                 f"[{r['score']}/100] {r['title']}",
@@ -326,6 +401,7 @@ def render(rows, config: dict, meta: dict, *, fmt: str) -> str:
       <h2 style="margin-bottom:4px">🔎 {escape(subject)}</h2>
       <p style="color:#6b7280;margin-top:0">{escape(intro)}</p>
       {_baro_html(meta)}
+      {_health_html(meta)}
       <table style="border-collapse:collapse;width:100%">{''.join(tr)}</table>
       <p style="color:#9ca3af;font-size:12px">geo-vigie — relevé automatique.
       Vérifiez toujours l'offre d'origine avant de postuler.</p>

@@ -204,6 +204,19 @@ CREATE TABLE IF NOT EXISTS runs (
     finished  TEXT,
     detail    TEXT
 );
+
+-- Santé des sources : une ligne par source et par relevé. Sert au rapport
+-- (une source morte ne doit pas disparaître en silence) et au diagnostic.
+CREATE TABLE IF NOT EXISTS source_health (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     INTEGER,
+    source     TEXT NOT NULL,
+    ok         INTEGER NOT NULL,
+    items      INTEGER DEFAULT 0,
+    error      TEXT DEFAULT '',
+    checked_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_source_health ON source_health(source, id DESC);
 """
 
 # Colonnes de l'ancien schéma mono-profil, à migrer puis supprimer.

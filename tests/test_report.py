@@ -3,7 +3,8 @@ import unittest
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
-from report import barometer, gather, recipients, render, report, send
+from report import (_health_html, _health_text, barometer, gather,
+                    recipients, render, report, send, source_health)
 
 
 def _make_conn() -> sqlite3.Connection:
@@ -387,6 +388,69 @@ class BarometerRenderTests(unittest.TestCase):
         meta = barometer(conn, CONFIG)
         self.assertEqual(meta["last7"], 3)
         conn.close()
+
+
+class SourceHealthTests(unittest.TestCase):
+    """Une source morte ne doit pas disparaître en silence (2026-11-10)."""
+
+    def _conn(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE source_health (id INTEGER PRIMARY KEY "
+            "AUTOINCREMENT, run_id INTEGER, source TEXT, ok INTEGER, "
+            "items INTEGER DEFAULT 0, error TEXT DEFAULT '', "
+            "checked_at TEXT)")
+        return conn
+
+    def test_failed_source_reports_streak(self):
+        conn = self._conn()
+        for run, stamp in ((1, "2026-11-04T17:00:00+00:00"),
+                           (2, "2026-11-07T17:00:00+00:00")):
+            conn.execute("INSERT INTO source_health (run_id,source,ok,items,"
+                         "error,checked_at) VALUES (?,?,1,25,'',?)",
+                         (run, 'reed', stamp))
+            conn.execute("INSERT INTO source_health (run_id,source,ok,items,"
+                         "error,checked_at) VALUES (?,?,0,0,"
+                         "'HTTPError: 403 Forbidden',?)",
+                         (run, 'journaldespalaces', stamp))
+        health = source_health(conn)
+        self.assertEqual((health["ok"], health["total"]), (1, 2))
+        self.assertEqual(health["failed"][0]["source"], "journaldespalaces")
+        self.assertEqual(health["failed"][0]["streak"], 2)
+        conn.close()
+
+    def test_recovery_resets_the_streak(self):
+        conn = self._conn()
+        for run, stamp, ok in ((1, "2026-11-04T17:00:00+00:00", 0),
+                               (2, "2026-11-07T17:00:00+00:00", 1),
+                               (3, "2026-11-10T17:00:00+00:00", 0)):
+            conn.execute("INSERT INTO source_health (run_id,source,ok,items,"
+                         "error,checked_at) VALUES (?,?,?,'','err',?)",
+                         (run, 'france-travail', ok, stamp))
+        health = source_health(conn)
+        self.assertEqual(health["failed"][0]["streak"], 1)
+        conn.close()
+
+    def test_no_history_or_absent_table_is_empty(self):
+        self.assertEqual(source_health(self._conn()), {})
+        self.assertEqual(source_health(sqlite3.connect(":memory:")), {})
+
+    def test_lines_are_rendered_in_text_and_html(self):
+        meta = {"health": {"ok": 17, "total": 18, "failed": [
+            {"source": "journaldespalaces", "streak": 3,
+             "error": "HTTPError: 403 Forbidden for url: https://x"}]}}
+        text = "\n".join(_health_text(meta))
+        self.assertIn("Sources : 17/18 OK", text)
+        self.assertIn("journaldespalaces", text)
+        self.assertIn("3 relevés", text)
+        html = _health_html(meta)
+        self.assertIn("Sources : 17/18 OK", html)
+        self.assertIn("#b91c1c", html)      # échec → rouge
+
+    def test_no_line_without_history(self):
+        self.assertEqual(_health_text({}), [])
+        self.assertEqual(_health_html({}), "")
 
 
 if __name__ == "__main__":
