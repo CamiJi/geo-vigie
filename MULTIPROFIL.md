@@ -148,6 +148,23 @@ dont adjoints de direction, responsables hôteliers et directions
 d'établissement), contre 1 auparavant. Reste à faire : API France Travail
 OAuth (`commune` + `distance`) pour remplacer la page nationale page 1.
 
+### Recadrage produit du 2026-11-11 (géolocalisation — Camille)
+
+Le malus seul laissait passer des offres à 60-70 km (score brut 80+ → 55+
+après −25). Exemples réels : Vert-Saint-Denis 51 km, Neufmoutiers 58 km,
+Rennes 285 km, Les Sables 382 km, Uvernet-Fours 611 km — 8 offres envoyées
+à Gabriela entre le 10 et le 11/11, toutes au-delà du périmètre souhaité.
+
+Ajout du géocodage BAN (Base Adresse Nationale, sans clé) : distance
+réelle en km depuis Fontenay-le-Fleury, stockée dans `offers.lat/lon`.
+`geo_filter.max_km: 45` → coupure dure au-delà (sauf mention de
+télétravail/remote dans le lieu). Malus gradué dans le périmètre :
+≤ 15 km → 0, 15-30 → 5, 30-45 → 10. Quentin n'a toujours aucun
+`geo_filter` : il est mobile.
+
+Résultat : 14 offres ≥ 55 hors périmètre éliminées, 9 conservées dans un
+rayon de 45 km. Plus aucun envoi d'offre à 300+ km.
+
 Re-scoring complet de Gabriela (36 offres nettes, 0 échec) et **étude
 renvoyée** le 2026-10-22 : 3 offres ≥ 55 (Revenue Manager TOO Hôtel,
 Directeur Room Service Fouquet's, Key Accounts Airbnb — tous Paris, tous
