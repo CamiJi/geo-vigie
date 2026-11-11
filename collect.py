@@ -478,11 +478,13 @@ def _match_profiles(profiles: dict, title: str, description: str,
 
 def _update_offer(conn, fp: str, title: str, item: dict, description: str,
                   location: str) -> None:
+    from common import geocode as _geocode
+    _lat, _lon = _geocode(location) or (None, None)
     conn.execute(
         "UPDATE offers SET title=?, company=?, location=?, url=?, "
-        "description=?, posted_at=? WHERE fingerprint=?",
+        "description=?, posted_at=?, lat=?, lon=? WHERE fingerprint=?",
         (title, item.get("company", ""), location, item.get("url", ""),
-         description, item.get("posted_at", ""), fp),
+         description, item.get("posted_at", ""), _lat, _lon, fp),
     )
 
 
@@ -619,14 +621,16 @@ def collect(config: dict, *, dry: bool = False, check: bool = False,
                 stats["keyword_out"] += 1
                 continue
 
+            from common import geocode as _geocode
+            _lat, _lon = _geocode(location) or (None, None)
             cur = conn.execute(
                 "INSERT OR IGNORE INTO offers "
                 "(fingerprint, source, title, company, location, url, "
-                " description, posted_at, first_seen, keyword_hit) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " description, posted_at, first_seen, keyword_hit, lat, lon) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (fp, source["name"], title, item.get("company", ""),
                  location, item.get("url", ""), description,
-                 item.get("posted_at", ""), now(), 1),
+                 item.get("posted_at", ""), now(), 1, _lat, _lon),
             )
             if cur.rowcount:
                 stats["kept"] += 1
@@ -684,6 +688,21 @@ def collect(config: dict, *, dry: bool = False, check: bool = False,
     if dry:
         print("\n(--dry : rien n'a été écrit)")
     if conn:
+        # Backfill géocodage (BAN) pour les offres anciennes : une fois.
+        missing = conn.execute(
+            "SELECT id, location FROM offers WHERE lat IS NULL").fetchall()
+        if missing:
+            from common import geocode as _geocode
+            done = 0
+            for row in missing:
+                coords = _geocode(row["location"] or "")
+                if coords:
+                    conn.execute("UPDATE offers SET lat=?, lon=? WHERE id=?",
+                                 (coords[0], coords[1], row["id"]))
+                    done += 1
+            conn.commit()
+            if done:
+                print(f"Géocodage : {done}/{len(missing)} offre(s) localisée(s).")
         conn.close()
     return 0
 

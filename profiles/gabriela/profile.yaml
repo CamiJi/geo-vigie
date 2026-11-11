@@ -26,22 +26,23 @@ persona: >-
   hors cible mais représentative du secteur garde de la valeur
   d'information.
 
-# Géographie : MALUS, plus filtre dur (recadrage 2026-11-10).
-# Le filtre dur éliminait avant notation ~82 offres pertinentes par relevé,
-# dont la quasi-totalité des postes de direction hôtelière (sources
-# nationales page 1) : le mail restait vide. Désormais tout est noté, et
-# une offre hors périmètre perd `penalty` points — elle reste donc visible
-# si elle est excellente. Lieu vide ou ambigu → aucun malus, le prompt
-# tranche avec la consigne douce ci-dessous.
+# Géographie : MALUS + COUPURE DURE au-delà de 45 km (recadrage 2026-11-11).
+# Le malus seul laissait passer des offres à 60-70 km quand leur score brut
+# était très haut (ex. 82/100 à 57 km). Le géocodage BAN fournit la
+# distance réelle (lat/lon stockés dans `offers`) ; au-delà de `max_km`,
+# l'offre est éliminée sauf mention de télétravail/remote dans le lieu.
+# Lieu vide ou non géocodable → repli sur le motif `pattern` (comportement
+# historique). Quentin, lui, n'a aucun `geo_filter` : il est mobile.
 geo_filter:
   soft: true
-  # Périmètre : IDF + couronne ~40 km (Eure-et-Loir, Eure, Oise).
+  max_km: 45
+  # Périmètre : IDF + couronne ~45 km (fallback motif si pas de coordonnées).
   pattern: '(?i)\b(?:75|77|78|9[1-5]|28|27|60)\b|paris|île-de-france|ile-de-france|\bIDF\b'
   penalty: 25
 
 location:
   base: "Fontenay-le-Fleury (78)"
-  zones: ["Île-de-France", "couronne ~40 km (28, 27, 60)"]
+  zones: ["Île-de-France", "couronne ~45 km"]
   remote: "accepté"
   relocation: "non"
 
@@ -165,10 +166,12 @@ scoring:
     (La géographie n'entre PAS dans la note : le moteur applique lui-même
     un malus hors périmètre après l'évaluation.)
   rules: |
-    - Géographie : ne pénalise pas la distance et ne plafonne pas une offre
-      à cause de son lieu. Le moteur retire automatiquement un malus aux
-      offres hors périmètre (IDF + couronne ~40 km). Signale simplement la
-      distance dans la justification quand elle est évidente.
+    - Géographie : le moteur applique un malus selon la distance réelle
+      (géocodage BAN, Base Adresse Nationale) et élimine au-delà de 45 km,
+      sauf mention de télétravail/remote dans le lieu. N'intègre pas la
+      distance dans la note ; signale-la seulement dans la justification
+      quand elle est évidente. Un poste hors périmètre mais excellent
+      reste masqué (pas de mail) — c'est le choix fait le 2026-11-11.
     - Niveau de poste : Gabriela est directrice adjointe d'hôtel. Les postes
       opérationnels d'exécution — cuisine, salle (responsable de salle, chef
       de rang, maître d'hôtel), réception, housekeeping, commis, gouvernante,

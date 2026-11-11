@@ -6,9 +6,10 @@ directrice adjointe d'hôtel ; salaire absent = neutre (mention en fin).
 """
 
 import unittest
+from unittest.mock import patch
 
 from collect import _match_profiles
-from common import geo_ok, geo_penalty, keyword_match
+from common import (geo_ok, geo_penalty, haversine, keyword_match)
 from score import _floor_rule
 
 GEO = {"geo_filter": {
@@ -123,10 +124,81 @@ class SoftGeoPenaltyTests(unittest.TestCase):
         from common import load_config
         conf = load_config("gabriela")
         self.assertTrue(conf["geo_filter"]["soft"])
-        self.assertTrue(geo_ok("64 - BAYONNE", conf))
-        self.assertEqual(geo_penalty("64 - BAYONNE", conf), 25)
+        import common
+        common._GEO_CACHE.clear()
+        common._BASE_COORDS_CACHE.clear()
+        # Au-delà de max_km : coupé (pas de malus, l'offre ne sera pas notée).
+        # Le mock geocode renvoie None → repli motif → BAYONNE coupé.
+        with patch("common.geocode", return_value=None):
+            self.assertFalse(geo_ok("64 - BAYONNE", conf))
+            self.assertEqual(geo_penalty("64 - BAYONNE", conf), 0)
         self.assertEqual(geo_penalty("78 - VERSAILLES", conf), 0)
 
+
+class GeoCodingTests(unittest.TestCase):
+    """Géocodage BAN + coupure dure à max_km (Gabriela, 2026-11-11).
+
+    Quentin, lui, n'a pas de geo_filter : ces tests ne le concernent pas.
+    """
+
+    def setUp(self):
+        import common
+        common._GEO_CACHE.clear()
+        common._BASE_COORDS_CACHE.clear()
+
+    CONF = {"geo_filter": {"soft": True, "max_km": 45, "pattern": "x",
+                           "penalty": 25},
+            "location": {"base": "Fontenay-le-Fleury (78)"}}
+
+    def test_haversine_paris_fontenay(self):
+        # ~25 km à vol d'oiseau
+        d = haversine(48.8566, 2.3522, 48.8109, 2.0416)
+        self.assertGreater(d, 20)
+        self.assertLess(d, 30)
+
+    def test_max_km_cuts_beyond_perimeter(self):
+        with patch("common.geocode", side_effect=lambda loc: {
+            "Fontenay-le-Fleury (78)": (48.8109, 2.0416),
+            "Versailles": (48.8014, 2.1301),
+            "Chartres": (48.4439, 1.4890),
+        }.get(loc.split(" - ")[-1].strip() if " - " in loc else loc) or
+              ((48.8109, 2.0416) if "Fontenay" in loc else None)):
+            # Versailles ~6 km → passe
+            self.assertTrue(geo_ok("78 - Versailles", self.CONF))
+            # Chartres ~57 km → coupé
+            self.assertFalse(geo_ok("28 - Chartres", self.CONF))
+
+    def test_remote_exception_keeps_far_offer(self):
+        with patch("common.geocode", side_effect=lambda loc: (48.8109, 2.0416)
+                   if "Fontenay" in loc else (48.4439, 1.4890)):
+            self.assertTrue(geo_ok("Chartres — télétravail", self.CONF))
+
+    def test_no_coords_falls_back_to_pattern(self):
+        with patch("common.geocode", return_value=None):
+            # motif présent → passe
+            self.assertTrue(geo_ok("75 - Paris", {"geo_filter":
+                {"soft": True, "max_km": 45,
+                 "pattern": r"(?i)\b75\b|paris", "penalty": 25}}))
+            # motif absent → coupé
+            self.assertFalse(geo_ok("69 - Lyon", {"geo_filter":
+                {"soft": True, "max_km": 45,
+                 "pattern": r"(?i)\b75\b|paris", "penalty": 25}}))
+
+    def test_graded_penalty_within_perimeter(self):
+        with patch("common.geocode", side_effect=lambda loc: {
+            "Fontenay-le-Fleury (78)": (48.8109, 2.0416),
+            "Versailles": (48.8014, 2.1301),   # ~6 km
+            "Haute-Isle": (49.12, 1.75),       # ~41 km
+        }.get(loc.split(" - ")[-1].strip() if " - " in loc else loc) or
+              ((48.8109, 2.0416) if "Fontenay" in loc else None)):
+            self.assertEqual(geo_penalty("78 - Versailles", self.CONF), 0)
+            self.assertEqual(geo_penalty("95 - Haute-Isle", self.CONF), 10)
+
+    def test_gabriela_profile_has_max_km(self):
+        from common import load_config
+        conf = load_config("gabriela")
+        self.assertEqual(conf["geo_filter"]["max_km"], 45)
+        self.assertTrue(conf["geo_filter"]["soft"])
 
 class FloorRuleTests(unittest.TestCase):
     def test_head_is_the_historical_behaviour(self):

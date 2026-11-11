@@ -13,6 +13,10 @@ from pathlib import Path
 
 import yaml
 
+import requests
+
+UA = "geo-vigie/0.1 (releve d'offres d'emploi personnel; contact: voir README)"
+
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "db" / "vigie.sqlite"
 
@@ -161,7 +165,9 @@ CREATE TABLE IF NOT EXISTS offers (
     description  TEXT DEFAULT '',
     posted_at    TEXT DEFAULT '',
     first_seen   TEXT NOT NULL,
-    keyword_hit  INTEGER DEFAULT 0
+    keyword_hit  INTEGER DEFAULT 0,
+    lat          REAL,
+    lon          REAL
 );
 
 CREATE TABLE IF NOT EXISTS scores (
@@ -318,6 +324,13 @@ def db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    # Migration additive : colonnes de géocodage (BAN) pour les bases existantes.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(offers)")}
+    if "lat" not in cols:
+        conn.execute("ALTER TABLE offers ADD COLUMN lat REAL")
+    if "lon" not in cols:
+        conn.execute("ALTER TABLE offers ADD COLUMN lon REAL")
+    conn.commit()
     migration_profile = _migration_profile()
     if migrate_schema(conn, default_profile=migration_profile,
                       backup_path=DB_PATH.parent / (
@@ -484,30 +497,179 @@ def keyword_match(config: dict, *parts: str) -> tuple[bool, str]:
     return False, ""
 
 
+_GEO_CACHE: dict[str, tuple[float, float] | None] = {}
+_BASE_COORDS_CACHE: dict[str, tuple[float, float] | None] = {}
+
+
+def _clean_location(location: str) -> str:
+    """Nettoie un lieu d'offre pour le géocodage BAN.
+
+    '78 - Versailles' → 'Versailles' ; 'Paris 14e - 75' → 'Paris' ;
+    'Fontenay-le-Fleury (78)' → 'Fontenay-le-Fleury' ;
+    'Paris 04' / 'Paris 12e Arrondissement' → 'Paris'.
+    """
+    loc = (location or "").strip()
+    if not loc:
+        return ""
+    m = re.match(r"^\d{1,3}\s*-\s*(.+)$", loc)
+    if m:
+        loc = m.group(1).strip()
+    loc = re.sub(r"\s*\(\d{1,3}\)\s*$", "", loc).strip()
+    m = re.match(r"^(.+?)\s*-\s*\d{1,3}\s*$", loc)
+    if m:
+        loc = m.group(1).strip()
+    loc = re.sub(r"\s+(?:\d{1,2}(?:er|e|ème)?\s+)?[Aa]rrondissement\s*$",
+                 "", loc).strip()
+    loc = re.sub(r"\s+\d{1,2}(?:er|e|ème)\s*$", "", loc).strip()
+    if re.match(r"(?i)^paris\b", loc):
+        loc = "Paris"
+    if re.match(r"(?i)^lyon\b", loc):
+        loc = "Lyon"
+    if re.match(r"(?i)^marseille\b", loc):
+        loc = "Marseille"
+    if loc.lower() in ("", "france", "île-de-france", "ile-de-france",
+                       "—", "-", "n/a", "europe", "remote"):
+        return ""
+    return loc
+
+
+def geocode(location: str) -> tuple[float, float] | None:
+    """Géocodage BAN (Base Adresse Nationale, sans clé, sans quota).
+
+    Retourne (lat, lon) ou None. Résultat mis en cache en mémoire ; la base
+    est consultée d'abord (lat/lon déjà stockés pour ce lieu).
+    """
+    key = (location or "").strip()
+    if key in _GEO_CACHE:
+        return _GEO_CACHE[key]
+    clean = _clean_location(key)
+    if not clean:
+        _GEO_CACHE[key] = None
+        return None
+    # 1) cache DB : même lieu déjà géocodé
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(DB_PATH))
+        row = conn.execute(
+            "SELECT lat, lon FROM offers WHERE location = ? "
+            "AND lat IS NOT NULL LIMIT 1", (key,)).fetchone()
+        conn.close()
+        if row and row[0] is not None:
+            _GEO_CACHE[key] = (row[0], row[1])
+            return _GEO_CACHE[key]
+    except Exception:  # noqa: BLE001
+        pass
+    # 2) appel BAN
+    try:
+        resp = requests.get(
+            "https://api-adresse.data.gouv.fr/search/",
+            params={"q": clean, "limit": 1, "type": "municipality"},
+            headers={"User-Agent": UA}, timeout=15)
+        if resp.status_code == 200:
+            features = resp.json().get("features") or []
+            if features:
+                lon, lat = features[0]["geometry"]["coordinates"]
+                _GEO_CACHE[key] = (lat, lon)
+                return _GEO_CACHE[key]
+    except Exception:  # noqa: BLE001
+        pass
+    _GEO_CACHE[key] = None
+    return None
+
+
+def _base_coords(config: dict) -> tuple[float, float] | None:
+    """Coordonnées de la base du profil (géocodées une fois)."""
+    loc = (config.get("location") or {}).get("base")
+    if not loc:
+        return None
+    if loc not in _BASE_COORDS_CACHE:
+        _BASE_COORDS_CACHE[loc] = geocode(loc)
+    return _BASE_COORDS_CACHE[loc]
+
+
+def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Distance orthodromique en km."""
+    import math
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = p2 - p1
+    dl = math.radians(lon2 - lon1)
+    a = (math.sin(dp / 2) ** 2
+         + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2)
+    return 2 * r * math.asin(math.sqrt(a))
+
+
 def geo_ok(location: str, config: dict) -> bool:
     """Filtre géographique optionnel (`geo_filter` du profil).
 
     - sans `geo_filter` → tout passe (comportement historique).
-    - `geo_filter.soft: true` → tout passe ici : le hors-périmètre n'est plus
-      éliminé mais reçoit le malus de `geo_penalty()` après notation.
-    - lieu vide ou ambigu → tout passe : le scoring LLM tranche alors avec
-      la consigne géographique du prompt.
-    - sinon → le lieu doit matcher le motif (ex. codes postaux IDF).
+    - `geo_filter.max_km` renseigné → coupure dure au-delà, sauf si le lieu
+      mentionne le télétravail/remote (le prompt gère alors la distance).
+      Le géocodage BAN (sans clé) fournit la distance ; en cas d'échec
+      (lieu étranger ou vague), on retombe sur le motif `pattern`.
+    - `geo_filter.soft: true` sans `max_km` → tout passe (malus en aval).
+    - sinon → motif `pattern` (ex. codes postaux IDF).
     """
     gf = config.get("geo_filter") or {}
     pattern = gf.get("pattern")
+    max_km = gf.get("max_km")
+    if max_km is not None:
+        coords = geocode(location)
+        base = _base_coords(config)
+        if coords and base:
+            distance = haversine(coords[0], coords[1], base[0], base[1])
+            if distance <= max_km:
+                return True
+            if re.search(r"télétravail|teletravail|remote|à distance|a distance",
+                         location or "", re.I):
+                return True
+            return False
+        # Pas de coordonnées (lieu étranger ou vague) : repli sur le motif,
+        # appliqué DUR (max_km demande une coupure, pas un malus). Un lieu
+        # vide ou manifestement ambigu (« — », « France », « IDF ») passe :
+        # le prompt tranche (et le LLM peut valoriser le télétravail).
+        loc = (location or "").strip()
+        if not loc or loc.lower() in ("—", "-", "n/a", "france",
+                                      "île-de-france", "ile-de-france", "idf"):
+            return True
+        if pattern:
+            return re.search(pattern, location) is not None
+        return True
     if not pattern or gf.get("soft") or not (location or "").strip():
         return True
     return re.search(pattern, location) is not None
 
 
 def geo_penalty(location: str, config: dict) -> int:
-    """Malus appliqué après notation d'une offre hors périmètre (`soft`).
+    """Malus appliqué après notation.
 
-    Ne s'applique qu'à un `geo_filter` souple : un filtre dur a déjà écarté
-    l'offre en amont. Lieu vide ou ambigu → 0 (le prompt tranche).
+    Avec `max_km` : malus gradué selon la distance réelle (BAN), dans la
+    limite du périmètre. Au-delà, l'offre est déjà éliminée par `geo_ok`.
+    Sans `max_km` : comportement historique (`pattern` + `penalty`).
+    Lieu vide/ambigu ou non géocodable → 0 (le prompt tranche).
     """
     gf = config.get("geo_filter") or {}
+    max_km = gf.get("max_km")
+    if max_km is not None:
+        coords = geocode(location)
+        base = _base_coords(config)
+        if coords and base:
+            d = haversine(coords[0], coords[1], base[0], base[1])
+            if d <= 15:
+                return 0
+            if d <= 30:
+                return 5
+            if d <= 45:
+                return 10
+            if d <= max_km:
+                return 18
+            # Au-delà du périmètre : l'offre n'a passé que grâce au
+            # télétravail/remote (geo_ok). Malus modéré, pas punitif.
+            if re.search(r"télétravail|teletravail|remote|à distance|a distance",
+                         location or "", re.I):
+                return 10
+            return 25
+        return 0
     pattern = gf.get("pattern")
     if not gf.get("soft") or not pattern or not (location or "").strip():
         return 0
