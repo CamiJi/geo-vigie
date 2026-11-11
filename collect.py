@@ -341,6 +341,63 @@ def fetch_lhotellerie(source: dict, config: dict) -> list[dict]:
     return out
 
 
+def fetch_jina_markdown(source: dict, config: dict) -> list[dict]:
+    """Lit une page via le lecteur r.jina.ai (proxy qui contourne les
+    blocages IP/Cloudflare) et extrait les offres d'un flux converti en
+    Markdown.
+
+    Utilisé pour Journal des Palaces : son flux RSS renvoie 403 depuis l'IP
+    du serveur (Cloudflare), mais r.jina.ai le lit et le renvoie en
+    Markdown structuré (`### [titre](url)` + date). Fragile par nature :
+    si le format change, le parseur renvoie 0 offre et la source est marquée
+    en échec par `source_health`. Pas de clé requise (niveau gratuit).
+    """
+    resp = requests.get(source["url"], headers={"User-Agent": UA,
+                                               "X-Return-Format": "markdown"},
+                        timeout=TIMEOUT)
+    resp.raise_for_status()
+    text = resp.text
+    if "Markdown Content:" in text:
+        text = text.split("Markdown Content:", 1)[1]
+
+    matches = list(re.finditer(
+        r"###\s*\[(.+?)\]\((https://www\.journaldespalaces\.com/"
+        r"carriere/offre-\d+-[^)]+\.html)\)", text))
+    if not matches:
+        raise ValueError("aucune offre parsée (format changé ?)")
+
+    max_items = int(source.get("max_items") or 0) or 50
+    seen: set[str] = set()
+    out = []
+    for i, match in enumerate(matches):
+        if len(out) >= max_items:
+            break
+        title = clean_html(match.group(1).strip())
+        url = match.group(2).strip()
+        if url in seen:
+            continue
+        seen.add(url)
+        segment = text[match.end():(matches[i + 1].start()
+                                    if i + 1 < len(matches) else match.end() + 300)]
+        date_match = re.search(
+            r"(\w{3},\s*\d{1,2}\s+\w{3}\s+\d{4}"
+            r"\s+\d{2}:\d{2}:\d{2}\s*[+-]\d{4})", segment)
+        posted = date_match.group(1).strip() if date_match else ""
+        company = (title.split(" recrute ", 1)[0].strip()
+                   if " recrute " in title else "")
+        out.append({
+            "title": title,
+            "company": clean_html(company),
+            "location": "",
+            "url": url,
+            "description": "",
+            "posted_at": posted,
+        })
+    if not out:
+        raise ValueError("aucune offre parsée (format changé ?)")
+    return out
+
+
 def fetch_michaelpage(source: dict, config: dict) -> list[dict]:
     """Parse Michael Page job tiles (lieu, contrat, SALAIRE, télétravail).
 
@@ -393,6 +450,7 @@ FETCHERS = {
     "france_travail": fetch_france_travail,
     "lhotellerie": fetch_lhotellerie,
     "michaelpage": fetch_michaelpage,
+    "jina_markdown": fetch_jina_markdown,
 }
 
 

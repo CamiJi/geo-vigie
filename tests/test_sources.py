@@ -9,6 +9,7 @@ from collect import (
     _relative_date,
     collect as run_collect,
     fetch_egu,
+    fetch_jina_markdown,
     fetch_france_travail,
     fetch_hellowork,
     fetch_lhotellerie,
@@ -283,3 +284,59 @@ class LlmRetryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JinaMarkdownTests(unittest.TestCase):
+    """Journal des Palaces via le proxy r.jina.ai (2026-11-11)."""
+
+    SAMPLE = (
+        "Title: x\nURL Source: y\nMarkdown Content:\n"
+        "### [Paris Marriott Opera Ambassador Hotel recrute Extra Chef de partie]"
+        "(https://www.journaldespalaces.com/carriere/offre-323459-Extra-Chef-de-"
+        "partie-Paris-Marriott-Opera-Ambassador-Hotel-Paris.html)\n\n"
+        "[https://www.journaldespalaces.com/carriere/offre-323459-Extra-Chef-de-"
+        "partie-Paris-Marriott-Opera-Ambassador-Hotel-Paris.html]\n\n"
+        "Tue, 10 Nov 2026 09:32:04 +0100\n"
+        "### [Four Seasons Resort Bora Bora recrute Chef de Partie Pâtisserie]"
+        "(https://www.journaldespalaces.com/carriere/offre-323431-Chef-de-Partie-"
+        "Patisserie-Four-Seasons-Resort-Bora-Bora--Bora-Bora.html)\n\n"
+        "Tue, 10 Nov 2026 08:15:00 +0100\n"
+    )
+
+    def _patched(self, monkey):
+        from unittest.mock import patch, MagicMock
+        resp = MagicMock()
+        resp.text = self.SAMPLE
+        resp.raise_for_status = lambda: None
+        with patch("collect.requests.get", return_value=resp):
+            return fetch_jina_markdown(
+                {"url": "https://r.jina.ai/https://x", "max_items": 50}, {})
+
+    def test_parses_title_url_company_date(self):
+        items = self._patched(None)
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["title"],
+                         "Paris Marriott Opera Ambassador Hotel recrute Extra Chef de partie")
+        self.assertEqual(items[0]["company"],
+                         "Paris Marriott Opera Ambassador Hotel")
+        self.assertEqual(items[0]["posted_at"],
+                         "Tue, 10 Nov 2026 09:32:04 +0100")
+        self.assertIn("offre-323459", items[0]["url"])
+
+    def test_max_items_is_respected(self):
+        items = self._patched(None)
+        # max_items=1 → 1 offre
+        from unittest.mock import patch, MagicMock
+        resp = MagicMock(); resp.text = self.SAMPLE; resp.raise_for_status = lambda: None
+        with patch("collect.requests.get", return_value=resp):
+            it = fetch_jina_markdown(
+                {"url": "https://r.jina.ai/https://x", "max_items": 1}, {})
+        self.assertEqual(len(it), 1)
+
+    def test_empty_result_raises(self):
+        from unittest.mock import patch, MagicMock
+        resp = MagicMock(); resp.text = "no offers here"; resp.raise_for_status = lambda: None
+        with patch("collect.requests.get", return_value=resp):
+            with self.assertRaises(ValueError):
+                fetch_jina_markdown(
+                    {"url": "https://r.jina.ai/https://x", "max_items": 50}, {})

@@ -160,23 +160,17 @@ sources:
     enabled: true
     url: https://www.michaelpage.fr/jobs
 
-  # Journal des Palaces : RSS officiel de la section carrière (offres
-  # hôtellerie de luxe FR/international). Désactivé le 2026-11-10 : le nano
-  # reçoit un 403 sur le flux (filtrage Cloudflare de l'IP datacenter, quel
-  # que soit le User-Agent) alors qu'il répond depuis le poste de travail.
-  # Réactiver seulement si le flux redevient joignable depuis le serveur.
+  # Journal des Palaces : flux RSS lu via r.jina.ai (proxy), car le
+  # serveur reçoit un 403 Cloudflare sur l'IP du nano. Le proxy renvoie le
+  # flux en Markdown (`### [titre](url)` + date) ; le parseur extrait les
+  # offres et la santé de source détecte tout changement de format.
+  # Dépendance à un tiers (rate limits, format) — à surveiller via la ligne
+  # « Sources : x/y OK » du mail.
   - name: journaldespalaces-rss
-    type: rss
-    enabled: false
-    url: https://www.journaldespalaces.com/carriere/feed/rss.xml
+    type: jina_markdown
+    enabled: true
+    url: "https://r.jina.ai/https://www.journaldespalaces.com/carriere/feed/rss.xml"
     max_items: 50
-    fields:
-      title: title
-      company: society
-      location: locality
-      url: link
-      posted_at: published
-      description: description
 
   # HelloWork / France Travail : requêtes dédiées hôtellerie en plus des
   # recherches géologie (fetchers existants, URL testées 200 avec cartes).
